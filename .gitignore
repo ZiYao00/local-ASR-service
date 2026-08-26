@@ -1,0 +1,18 @@
+# Machine-local runtimes and models
+.venv*/
+models/
+runtime/
+logs/
+
+# Local samples, generated transcripts, and backups
+input/
+output/
+backups/
+testdata/
+*.mp4
+*.wav
+
+# Local configuration and Python cache
+config/local.json
+__pycache__/
+*.py[cod]

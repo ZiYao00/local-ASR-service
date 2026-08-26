@@ -1,0 +1,10 @@
+{
+  "base_url": "http://127.0.0.1:8001/v1",
+  "runtime": "cpu",
+  "profiles": {
+    "fast": {
+      "api_model": "custom",
+      "actual_model": "SenseVoiceSmall"
+    }
+  }
+}
