@@ -21,7 +21,7 @@ function Write-StableJson {
         [object]$Value
     )
 
-    Write-Output ($Value | ConvertTo-Json -Depth 12 -Compress)
+    Write-Output (ConvertTo-Json -InputObject $Value -Depth 12 -Compress)
 }
 
 function Get-MediaContentType {
@@ -82,15 +82,7 @@ function Invoke-Transcription {
             throw 'Transcription API returned no text.'
         }
 
-        return [ordered]@{
-            status = 'ok'
-            text = $result.text.Trim()
-            raw_text = if ($result.PSObject.Properties.Name -contains 'raw_text') { $result.raw_text } else { $result.text.Trim() }
-            language = if ($result.PSObject.Properties.Name -contains 'language') { $result.language } else { $RequestedLanguage }
-            duration = if ($result.PSObject.Properties.Name -contains 'duration') { $result.duration } else { $null }
-            model = if ($result.PSObject.Properties.Name -contains 'model') { $result.model } else { $Config.ModelName }
-            segments = if ($result.PSObject.Properties.Name -contains 'segments' -and $null -ne $result.segments) { @($result.segments) } else { @() }
-        }
+        return $body.Trim()
     } finally {
         if ($stream) { $stream.Dispose() }
         if ($fileContent) { $fileContent.Dispose() }
@@ -137,6 +129,6 @@ switch ($Command) {
             throw "Unsupported input '$($inputFile.Extension)'. Supported: $($supportedExtensions -join ', ')"
         }
 
-        Write-StableJson -Value (Invoke-Transcription -InputFile $inputFile -RequestedLanguage $Language -Config $config)
+        Write-Output (Invoke-Transcription -InputFile $inputFile -RequestedLanguage $Language -Config $config)
     }
 }

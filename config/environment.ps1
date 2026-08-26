@@ -71,7 +71,7 @@ function Get-FunAsrServiceConfig {
         BaseUrl         = "http://${bindHost}:$port"
         ModelAlias      = [string](Get-FunAsrLocalSetting -Settings $settings -Name 'modelAlias')
         ModelName       = [string](Get-FunAsrLocalSetting -Settings $settings -Name 'modelName')
-        ModelPath       = Resolve-FunAsrProjectPath -ProjectRoot $serviceRoot -RelativePath ([string](Get-FunAsrLocalSetting -Settings $settings -Name 'modelPath'))
+        ModelPath       = [string](Get-FunAsrLocalSetting -Settings $settings -Name 'modelPath')
         VadModel        = [string](Get-FunAsrLocalSetting -Settings $settings -Name 'vadModel')
         PuncModel       = [string](Get-FunAsrLocalSetting -Settings $settings -Name 'puncModel')
         MaxSingleSegmentMs = [int](Get-FunAsrLocalSetting -Settings $settings -Name 'maxSingleSegmentMs')
@@ -184,7 +184,7 @@ function Start-FunAsrServer {
     if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
         throw "The $RuntimeName runtime Python executable was not found: $Python"
     }
-    Test-FunAsrConfiguredLocalModel -ProjectRoot $Config.Root -Label $Config.ModelName -Reference ($Config.ModelPath.Substring($Config.Root.Length).TrimStart('\', '/'))
+    Test-FunAsrConfiguredLocalModel -ProjectRoot $Config.Root -Label $Config.ModelName -Reference $Config.ModelPath
     Test-FunAsrConfiguredLocalModel -ProjectRoot $Config.Root -Label 'FSMN-VAD' -Reference $Config.VadModel
     Test-FunAsrConfiguredLocalModel -ProjectRoot $Config.Root -Label 'CT-Transformer punctuation' -Reference $Config.PuncModel
 
@@ -199,6 +199,12 @@ function Start-FunAsrServer {
     $stdout = Join-Path $Config.Logs "server-$RuntimeName-$stamp.stdout.log"
     $stderr = Join-Path $Config.Logs "server-$RuntimeName-$stamp.stderr.log"
     $env:LOCAL_ASR_DEVICE = $Device
+    $ffmpeg = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
+    if ($ffmpeg) {
+        $env:LOCAL_ASR_FFMPEG = $ffmpeg.Source
+    } else {
+        Remove-Item Env:LOCAL_ASR_FFMPEG -ErrorAction SilentlyContinue
+    }
     $arguments = @(
         '-m', 'uvicorn',
         'service.app:app',

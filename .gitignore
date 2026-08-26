@@ -16,3 +16,10 @@ testdata/
 config/local.json
 __pycache__/
 *.py[cod]
+.pytest_cache/
+
+# Local editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

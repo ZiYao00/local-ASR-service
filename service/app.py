@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -25,6 +24,19 @@ def _resolve_project_path(value: str) -> str:
     return str((ROOT / path).resolve())
 
 
+def _resolve_model_reference(value: str) -> str:
+    """Resolve project-local model paths while allowing official model IDs for fresh installs."""
+    path = Path(value)
+    if path.is_absolute():
+        raise RuntimeError(f"Model paths must be relative to project root or a model ID: {value}")
+    candidate = ROOT / path
+    if candidate.exists():
+        return str(candidate.resolve())
+    if value.replace("/", "\\").lower().startswith("models\\"):
+        raise RuntimeError(f"Configured local model directory does not exist: {candidate}")
+    return value
+
+
 def _load_config() -> dict[str, Any]:
     if not LOCAL_CONFIG.is_file():
         raise RuntimeError(f"Missing machine-local configuration: {LOCAL_CONFIG}")
@@ -43,11 +55,9 @@ def _load_config() -> dict[str, Any]:
         if key not in data or data[key] in (None, ""):
             raise RuntimeError(f"Missing required setting '{key}' in config/local.json")
 
-    model_path = _resolve_project_path(str(data["modelPath"]))
-    vad_value = str(data["vadModel"])
-    vad_model = _resolve_project_path(vad_value) if (ROOT / vad_value).exists() else vad_value
-    punc_value = str(data["puncModel"])
-    punc_model = _resolve_project_path(punc_value) if (ROOT / punc_value).exists() else punc_value
+    model_path = _resolve_model_reference(str(data["modelPath"]))
+    vad_model = _resolve_model_reference(str(data["vadModel"]))
+    punc_model = _resolve_model_reference(str(data["puncModel"]))
     temp_dir = _resolve_project_path(str(data["temp"]))
 
     os.environ["MODELSCOPE_CACHE"] = _resolve_project_path(str(data["modelScopeCache"]))
@@ -82,12 +92,13 @@ def _load_config() -> dict[str, Any]:
         "queue_timeout_seconds": queue_timeout_seconds,
         "max_upload_bytes": max_upload_bytes,
         "upload_chunk_bytes": upload_chunk_bytes,
+        "ffmpeg_path": os.environ.get("LOCAL_ASR_FFMPEG", "ffmpeg"),
     }
 
 
 CONFIG = _load_config()
 ENGINE = AsrEngine(CONFIG)
-APP = FastAPI(title="local-ASR-service", version="0.2.0")
+APP = FastAPI(title="local-ASR-service", version="0.3.0")
 QUEUE = asyncio.Semaphore(1)
 STATE_LOCK = asyncio.Lock()
 RUNNING = 0
@@ -166,7 +177,7 @@ async def health() -> dict[str, Any]:
         "vad": True,
         "punctuation": True,
         "queue": await _queue_snapshot(),
-        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffmpeg": ENGINE.ffmpeg_ready,
     }
 
 

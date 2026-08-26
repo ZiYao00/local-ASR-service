@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$InputPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'input\test1.mp4')
+    [string]$InputPath
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$root = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($InputPath)) {
+    $InputPath = Join-Path $root 'input\test1.mp4'
+}
 $cli = Join-Path $PSScriptRoot 'asr.ps1'
 $inputFile = Get-Item -LiteralPath $InputPath -ErrorAction Stop
 if ($inputFile.PSIsContainer) {
@@ -36,6 +40,9 @@ if ([string]::IsNullOrWhiteSpace($transcription.raw_text)) {
 if ($null -eq $transcription.duration -or [double]$transcription.duration -le 0) {
     throw 'CLI transcription result does not contain a valid duration.'
 }
+if ($transcription.PSObject.Properties.Name -notcontains 'segments_punctuated') {
+    throw 'CLI transcription result does not expose segments_punctuated.'
+}
 
 [pscustomobject]@{
     Status = 'passed'
@@ -44,6 +51,7 @@ if ($null -eq $transcription.duration -or [double]$transcription.duration -le 0)
     TextCharacters = $transcription.text.Length
     RawTextCharacters = $transcription.raw_text.Length
     SegmentCount = @($transcription.segments).Count
+    SegmentsPunctuated = [bool]$transcription.segments_punctuated
     DurationSeconds = $transcription.duration
     ApiModels = @($models.api_models) -join ', '
 }

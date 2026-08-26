@@ -6,8 +6,57 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Any
+
+
+def _alignment_key(text: str) -> str:
+    """Remove whitespace and punctuation while preserving spoken surface characters."""
+    return "".join(
+        char
+        for char in text
+        if not char.isspace() and not unicodedata.category(char).startswith("P")
+    )
+
+
+def _map_punctuation_to_segments(full_text: str, segment_texts: list[str]) -> list[str] | None:
+    """Project punctuation from full_text back onto VAD segments without changing timing."""
+    if not full_text or not segment_texts:
+        return None
+
+    segment_keys = [_alignment_key(text) for text in segment_texts]
+    if any(not key for key in segment_keys):
+        return None
+
+    full_key = _alignment_key(full_text)
+    if "".join(segment_keys).casefold() != full_key.casefold():
+        return None
+
+    content_positions = [
+        index
+        for index, char in enumerate(full_text)
+        if not char.isspace() and not unicodedata.category(char).startswith("P")
+    ]
+    if len(content_positions) != len(full_key):
+        return None
+
+    mapped: list[str] = []
+    content_offset = 0
+    slice_start = 0
+    for segment_key in segment_keys:
+        content_offset += len(segment_key)
+        if content_offset < len(content_positions):
+            slice_end = content_positions[content_offset]
+        else:
+            slice_end = len(full_text)
+        piece = full_text[slice_start:slice_end].strip()
+        if not piece:
+            return None
+        mapped.append(piece)
+        slice_start = slice_end
+
+    return mapped
 
 
 class AsrEngine:
@@ -19,6 +68,7 @@ class AsrEngine:
         self.vad_model = str(config["vad_model"])
         self.punc_model = str(config["punc_model"])
         self.max_single_segment_ms = int(config.get("max_single_segment_ms", 30000))
+        self.ffmpeg_path = str(config.get("ffmpeg_path", "ffmpeg"))
         self.temp_dir = Path(config["temp_dir"])
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self._model = None
@@ -45,10 +95,16 @@ class AsrEngine:
                 disable_pbar=True,
             )
 
+    @property
+    def ffmpeg_ready(self) -> bool:
+        candidate = Path(self.ffmpeg_path)
+        return candidate.is_file() if candidate.is_absolute() else shutil.which(self.ffmpeg_path) is not None
+
     def _normalize_media(self, input_path: Path) -> tuple[Path, Path | None]:
-        ffmpeg = shutil.which("ffmpeg")
+        candidate = Path(self.ffmpeg_path)
+        ffmpeg = str(candidate) if candidate.is_absolute() and candidate.is_file() else shutil.which(self.ffmpeg_path)
         if not ffmpeg:
-            raise RuntimeError("ffmpeg was not found on PATH; media cannot be normalized.")
+            raise RuntimeError("ffmpeg was not found; media cannot be normalized.")
 
         fd, temp_name = tempfile.mkstemp(prefix="local-asr-", suffix=".wav", dir=self.temp_dir)
         os.close(fd)
@@ -120,8 +176,19 @@ class AsrEngine:
                     segment["raw_text"] = re.sub(r"<\|[^|]*\|>", "", str(item["raw_text"])).strip()
                 segments.append(segment)
 
-            if len(segments) == 1:
-                segments[0]["text"] = text
+            segments_punctuated = False
+            if segments:
+                mapped_texts = _map_punctuation_to_segments(
+                    text,
+                    [str(segment["text"]) for segment in segments],
+                )
+                if mapped_texts is not None:
+                    for segment, mapped_text in zip(segments, mapped_texts):
+                        segment["text"] = mapped_text
+                    segments_punctuated = True
+                elif len(segments) == 1:
+                    segments[0]["text"] = text
+                    segments_punctuated = True
 
             try:
                 import soundfile as sf
@@ -138,6 +205,7 @@ class AsrEngine:
                 "duration": duration,
                 "model": self.model_name,
                 "segments": segments,
+                "segments_punctuated": segments_punctuated,
             }
         finally:
             if cleanup_path is not None:

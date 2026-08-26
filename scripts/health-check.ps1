@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [ValidateRange(0, 600)]
+    [int]$WaitSeconds = 0
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -7,13 +10,32 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'config\environment.ps1')
 $config = Get-FunAsrServiceConfig
 
-$health = Invoke-RestMethod -Uri "$($config.BaseUrl)/health" -TimeoutSec 10
+$deadline = (Get-Date).AddSeconds($WaitSeconds)
+$health = $null
+$lastError = $null
+$requestTimeout = if ($WaitSeconds -gt 0) { 3 } else { 10 }
+
+do {
+    try {
+        $health = Invoke-RestMethod -Uri "$($config.BaseUrl)/health" -TimeoutSec $requestTimeout
+        if ($health.status -eq 'ok') {
+            break
+        }
+        $lastError = "Health endpoint returned status '$($health.status)'."
+    } catch {
+        $lastError = $_.Exception.Message
+        $health = $null
+    }
+
+    if ($WaitSeconds -le 0 -or (Get-Date) -ge $deadline) {
+        throw "local-ASR-service is not ready at $($config.BaseUrl). $lastError"
+    }
+    Start-Sleep -Seconds 1
+} while ($true)
+
 $models = Invoke-RestMethod -Uri "$($config.BaseUrl)/v1/models" -TimeoutSec 10
 $modelIds = @($models.data | ForEach-Object { $_.id })
 
-if ($health.status -ne 'ok') {
-    throw "Health endpoint returned status '$($health.status)'."
-}
 if ($health.device -notin @('cpu', 'cuda')) {
     throw "Expected a CPU or CUDA service, but /health reported '$($health.device)'."
 }

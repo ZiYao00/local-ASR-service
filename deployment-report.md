@@ -1,91 +1,175 @@
-# local-ASR-service 迁移与验证报告
+# local-ASR-service 发布前验证报告
 
 更新日期：2026-08-26
 
-## 当前状态
+## 发布候选状态
 
-`local-ASR-service` 已从“FunASR Server 启动壳 + 客户端互斥锁”升级为拥有自身薄服务层的本机共享 ASR 服务。
+当前代码可作为 `v0.3.0` public-beta candidate。
 
-默认生产链：
+`local-ASR-service` 的定位不是另一个 ASR 模型或通用 FunASR Server，而是面向 Windows 本机 Agent、Skill、自动化脚本和其它工具的共享 ASR Gateway：统一处理 FFmpeg、VAD、SenseVoice、标点恢复、服务端 Queue 和稳定 API。
 
 ```text
-本地媒体
-→ FFmpeg 规范化（所有媒体统一为 16 kHz 单声道 WAV）
-→ FSMN-VAD
-→ SenseVoiceSmall
-→ CT-Transformer 标点恢复
-→ 稳定 JSON
+Agent / Skill / Tool
+        ↓
+local-ASR-service
+        ↓
+Server Queue
+        ↓
+FFmpeg → FSMN-VAD → SenseVoiceSmall → CT-Transformer
+        ↓
+text / raw_text / real VAD segments / TXT / SRT
 ```
 
-## Phase 3 已完成
+## 52 分钟真实媒体验证
 
-- 新增 `service/app.py` 与 `service/engine.py`，不修改 `.venv` 中的 FunASR 源码。
-- SenseVoiceSmall 继续使用既有本地模型。
-- FSMN-VAD 已确认从既有本地模型目录加载。
-- 已下载并验证官方 CT-Transformer 标点模型；当前机器的 `config/local.json` 已固定到该本地模型路径。
-- 默认 `text` 输出为恢复标点后的可读文本；新增 `raw_text` 保留 ASR 原始文字并去除 SenseVoice 特殊标签。
-- `duration` 返回真实媒体时长。
-- `segments` 不再使用按字符比例生成的伪时间轴；无法精确对齐标点时退回真实 VAD 语音段。
-- 并发队列迁移到服务端；CLI 不再维护 Windows 命名互斥锁。
-- `transcribe-file.ps1` 已收口为统一服务结果的 TXT/SRT 导出器，不再重复实现 FFmpeg + HTTP 转写链。
-- `/health` 新增服务名、模型、VAD、标点、Queue 与 FFmpeg 状态。
-- README、接入文档、Smoke Test 已同步新契约。
-- 上传按 4 MiB 分块写入项目 `runtime/temp`，不再将完整媒体文件读入内存；默认单文件上限为 2 GiB。
-- 新旧服务均可由停止脚本在健康响应和隔离 Python 启动器都匹配时安全停止。
-
-## 本次真实验证
+2026-08-26 已完成一次 52 分 02 秒、354 MiB 视频测试：
 
 | 检查 | 结果 |
 |---|---|
-| Python 服务代码编译 | 通过 |
-| SenseVoiceSmall 本地加载 | 通过 |
-| FSMN-VAD 本地加载 | 通过 |
-| CT-Transformer 本地加载 | 通过 |
-| `test1.mp4` Pipeline 转写 | 通过 |
-| `test2.mp4` TXT/SRT 导出 | 通过 |
-| 标点恢复 | 通过 |
-| `raw_text` 标签清理 | 通过 |
-| 真实 duration | 通过，17.972 秒 |
-| VAD segment | 通过，样本为 0.0–17.95 秒 |
-| 新服务接管 `127.0.0.1:8001` | 通过 |
-| `/health` 与 `/v1/models` | 通过 |
-| `response_format=text` 纯文本响应 | 通过 |
-| 双客户端服务端排队 | 通过，实测 `running=1, waiting=1` |
+| CPU 转写耗时 | 4 分 55 秒 |
+| 处理速度 | 约 10.6× 实时 |
+| TXT | 18,072 字符，UTF-8，带标点 |
+| SRT 时间轴 | 890 段，编号连续、时间戳合法且单调 |
+| 分块上传 | 通过 |
+| 临时上传文件 | 完成后清理 |
+| 规范化 WAV | 完成后清理 |
+| 服务状态 | 完成后正常 |
+| Queue | 完成后恢复空闲 |
 
-本次文件输出位于 `runtime/test/phase3-hardening-output/`，其中包括按命名约定生成的 `test2_sensevoice-small_CPU.txt` 与 `.srt`。该目录为 Git 忽略的本地验收产物。
+该测试确认了长媒体上传、CPU 稳定性、VAD 时间轴和临时文件生命周期。
 
-## 时间轴行为
+原测试同时暴露：顶层 TXT 有标点，但 890 个 VAD SRT 段标点覆盖率为 0%。
 
-SenseVoiceSmall 不总能提供足够的词级时间信息，使 CT-Transformer 的标点句子精确映射回时间轴。FunASR 1.4.3 在这种情况下会退回真实 VAD 段。
+## SRT 标点映射修复
 
-本项目接受这一降级：宁可返回较粗但真实的语音时间段，也不再按字符数量人为估算更细时间轴。
+当前版本新增安全映射层：
 
-## 尚未完成的验收
+- 保持每个 VAD segment 的 `start` / `end` 完全不变；
+- 不根据标点重新切割或估算时间轴；
+- 仅在顶层 `text` 与所有 VAD 段主体文字能够完整一一对齐时，把标点投影回 segment；拉丁字母大小写差异不单独阻断对齐；
+- 成功时返回 `segments_punctuated: true`；
+- 无法可靠对齐时保留原 VAD 文本并返回 `false`，不猜测。
 
-- 30 分钟真实长音频压力测试。
-- 60 分钟真实长音频压力测试。
-- 多个真实 VAD 段的 SRT 标点可读性复核。
+已完成两层验证：
 
-本轮两个短样本均只产生一个 VAD 段，因此不能将其作为多段 SRT 标点效果或长媒体稳定性的证据。
+1. `tests/test_segment_punctuation.py` 单元测试通过，覆盖中文标点、英文标点和带连字符文本；
+2. 将 `test1 + 4 秒静音 + test2` 合成 51.415 秒真实多 VAD 音频，实际转写得到 2 个 VAD 段，`SegmentsPunctuated=True`，导出的 SRT 两段均带标点，时间边界保持为真实 VAD 结果。
+3. 5 分 04.785 秒真实媒体实际得到 54 个 VAD 段；修复后 `segments_punctuated=True`，其中 46 段带有完整文本中的自然标点。其余 8 段跨越自然句子边界，服务不会伪造句末标点。
 
-## 当前运行态注意事项
+原 52 分钟媒体是在修复前转写的，因此如需把“890 段全部标点回写”作为正式 Release 证据，仍建议对同一媒体再跑一次最终回归。
 
-原 `127.0.0.1:8001` FunASR 进程已通过项目停止脚本安全停止；当前端口由 `service.app:app` 的项目隔离 CPU 环境提供服务。重启流程为：
+## Queue 验证
 
-```powershell
-.\scripts\start-server.ps1
-.\scripts\health-check.ps1
-.\scripts\smoke-test.ps1
+`scripts/queue-smoke-test.ps1` 已实际并发提交两个客户端请求，并观察到：
+
+```text
+running = 1
+waiting >= 1
 ```
 
-## 仓库状态
+两个请求完成后：
 
-仓库仍未创建首次 Git commit；本轮没有提交或推送。
+```text
+running = 0
+waiting = 0
+```
 
-本轮修改前备份：
+因此 CLI 与直接服务调用共用服务端单任务 Queue 的契约已验证。
 
-`backups/phase3-pre-service-refactor-20260826-1725.zip`
+## Windows / PowerShell 兼容修复
 
-服务加固前备份：
+发布整理过程中发现并修复两个旧问题：
 
-`backups/phase3-before-hardening-20260826-1735.zip`
+- `compare-asr.ps1` 在 Windows PowerShell 5.1 下受 UTF-8 无 BOM 中文 here-string 影响而解析失败，同时仍引用旧版已删除的性能字段；现已改为兼容当前结果结构的 ASCII-only 实验对比脚本；
+- `smoke-test.ps1` 与 Queue 测试不再在参数默认值阶段使用 `$PSScriptRoot`，兼容 Windows PowerShell 5.1。
+
+全量 `scripts/*.ps1` 解析检查已通过。
+
+## 稳定 JSON 契约
+
+Windows PowerShell 5.1 会在 `ConvertFrom-Json` 时解包单元素数组。为避免 CLI 将单段 `segments` 错误输出成对象，`transcribe` 现在验证服务响应后直接透传 Python Server 的原始 JSON，不再由 PowerShell 二次组装。
+
+已验证：单段响应中的 `segments` 保持 JSON array，`segments_punctuated=True`。
+
+## FFmpeg 后台进程兼容
+
+发布测试发现：宿主 PowerShell 能找到 FFmpeg，但后台 Uvicorn 子进程可能无法通过 `PATH` 再次解析它。
+
+现在启动脚本会先由 PowerShell 解析 `ffmpeg.exe`，再通过进程环境把绝对路径传给服务；路径不会写入公开配置或 Git。
+
+重启后 `/health` 已验证 `ffmpeg=True`。
+
+## 可重建安装
+
+新增：
+
+- `requirements-cpu.txt`：当前服务主要依赖版本；
+- `scripts/install-cpu.ps1`：Windows / Python 3.11 CPU 安装入口；
+- `config/local.example.json`：使用官方 ModelScope 模型 ID，新 clone 首次启动可下载到项目内缓存。
+
+当前开发环境：Python 3.11.15、PyTorch CPU、FunASR 1.4.3、FastAPI 0.141.1、Uvicorn 0.52.4。`pip check` 已通过。
+
+安装脚本不会删除或覆盖已经存在的 `.venv-cpu` / `config/local.json`。完全干净的新 Windows 机器安装仍建议在正式 `v1.0` 前独立做一次外部复现验证。
+
+## 教程化文档
+
+公开说明已调整为“先会用，再理解原理”的教程结构：
+
+- `README.md`：项目首页、快速上手、日常使用、Agent / Skill 接入入口；
+- `docs/INSTALL.md`：完整安装教程，明确推荐使用具备本地终端权限的 Agent 执行安装与验收；
+- `docs/integration.md`：其它 Agent、Skill、脚本复用共享 ASR 服务的接入教程。
+
+文档明确说明：开发机已经存在的 `.venv`、模型、缓存、日志、测试媒体和本机配置不会上传 GitHub；用户在自己的机器运行 `install-cpu.ps1` 自动建立 Python 环境和项目依赖。手工逐项安装 Python 依赖不是推荐路径。
+
+## License / 第三方边界
+
+- 项目自有代码与文档：MIT；
+- 仓库不分发模型权重；
+- FunASR 与默认 ModelScope 模型的许可证边界记录在 `THIRD_PARTY.md`；
+- 模型许可证应以实际使用时的上游模型卡为准。
+
+## 隐私与仓库边界
+
+新增 `scripts/release-audit.ps1`，当前最终审计结果：
+
+```text
+FilesScanned = 29
+PrivacyFindings = 0
+RequiredIgnoreRules = 8
+```
+
+公开仓库忽略：
+
+- `.venv*`；
+- `models/`；
+- `runtime/`；
+- `logs/`；
+- `input/`；
+- `output/`；
+- `backups/`；
+- `config/local.json`；
+- IDE / OS 临时文件。
+
+早期未使用的 `config/service.json` 已移除，避免与 `local.json / local.example.json` 形成双配置入口。
+
+## 最终自动检查
+
+- Python compile：通过；
+- PowerShell 5.1 全脚本 parse：通过；
+- segment punctuation unit test：通过；
+- short-media smoke test：通过；
+- real multi-VAD SRT punctuation test：通过；
+- server Queue smoke test：通过；
+- `pip check`：通过；
+- release privacy / ignore audit：通过。
+
+## 发布建议
+
+当前适合发布为 `v0.3.0` / public beta，而不是直接声明 `v1.0`。
+
+正式 `v1.0` 前建议只保留两项外部验证：
+
+1. 在一台干净 Windows 环境从 clone 开始执行 `install-cpu.ps1`；
+2. 用修复后的版本重新跑同一条 52 分钟视频，记录 890 段 SRT 的最终 `segments_punctuated` / 标点覆盖结果。
+
+本轮修改前备份：`backups/pre-public-release-20260826-1822.zip`。

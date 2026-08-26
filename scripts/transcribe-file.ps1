@@ -67,6 +67,7 @@ $validSegments = $segments.Count -gt 0 -and @($segments | Where-Object {
 }).Count -eq $segments.Count
 
 $srtPath = $null
+$segmentsPunctuated = ($result.PSObject.Properties.Name -contains 'segments_punctuated') -and [bool]$result.segments_punctuated
 if ($validSegments) {
     $formatTimestamp = {
         param([TimeSpan]$value)
@@ -91,4 +92,5 @@ if ($validSegments) {
     TotalSeconds         = [math]::Round($totalTimer.Elapsed.TotalSeconds, 3)
     TextCharacters       = $result.text.Length
     SegmentCount         = $segments.Count
+    SegmentsPunctuated   = $segmentsPunctuated
 }
