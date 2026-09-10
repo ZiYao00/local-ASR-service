@@ -54,7 +54,58 @@
 .\bin\asr.cmd transcribe "C:\media\demo.mp4"
 ```
 
+如果已经有准确口播稿并需要剪辑字幕：
+
+```powershell
+.\bin\asr.cmd align "C:\media\voice.mp3" "C:\media\script.txt" -Preset voiceover
+```
+
+如果希望直接落盘 SRT / JSON，优先使用：
+
+```powershell
+.\scripts\align-subtitles.ps1 "C:\media\voice.mp3" "C:\media\script.txt" -Preset voiceover
+```
+
 CLI 输出就是稳定 JSON，可以直接交给上游 Agent 解析。
+
+### 落盘文件归属：由业务项目管理资产
+
+上游 Agent / Skill 不应该为了调用 ASR，把真实业务媒体统一复制到 `local-ASR-service\input`，也不应该默认把最终字幕长期堆在仓库 `output/`。
+
+需要直接得到文件时，遵循以下顺序：
+
+```text
+默认
+→ 输入媒体旁的 ASR_Output/
+
+业务项目明确指定目录
+→ -OutputDirectory <业务目录>
+
+仅开发 / 调试 / Smoke Test
+→ -UseProjectOutput
+→ local-ASR-service\output
+```
+
+例如业务素材已经位于：
+
+```text
+D:\ProjectA\media\voice.mp3
+D:\ProjectA\media\script.txt
+```
+
+直接调用即可：
+
+```powershell
+.\scripts\align-subtitles.ps1 "D:\ProjectA\media\voice.mp3" "D:\ProjectA\media\script.txt" -Preset voiceover
+```
+
+默认结果属于原业务项目：
+
+```text
+D:\ProjectA\media\ASR_Output\
+```
+
+如果上游已经有自己的 `artifacts/`、`cache/`、`subtitles/` 等目录，应由上游显式传入 `-OutputDirectory`。`local-ASR-service` 负责处理能力，最终资产的生命周期、命名和归档仍由业务项目负责。
 
 这种方式适合：
 
@@ -79,6 +130,9 @@ CLI 输出就是稳定 JSON，可以直接交给上游 Agent 解析。
 需要时间轴时读取 segments。
 需要判断字幕段是否已经回写标点时读取 segments_punctuated。
 raw_text 只用于调试、质量对比或需要原始 ASR 文本的场景。
+真实业务媒体保持在原业务项目，不要为调用 ASR 复制进 local-ASR-service\input。
+需要落盘字幕时，默认使用媒体旁的 ASR_Output；如果业务项目已有自己的产物目录，显式传入 -OutputDirectory。
+只有开发、调试或 Smoke Test 才使用 -UseProjectOutput。
 ```
 
 ---
@@ -97,6 +151,7 @@ http://127.0.0.1:8001
 GET  /health
 GET  /v1/models
 POST /v1/audio/transcriptions
+POST /v1/audio/alignments
 ```
 
 ### 第一步：先检查健康状态
@@ -121,7 +176,12 @@ GET http://127.0.0.1:8001/health
     "running": 0,
     "waiting": 0
   },
-  "ffmpeg": true
+  "ffmpeg": true,
+  "forced_alignment": {
+    "ready": true,
+    "model_name": "Qwen3-ForcedAligner-0.6B",
+    "max_audio_seconds": 300.0
+  }
 }
 ```
 
@@ -180,6 +240,72 @@ MKV
 ```
 
 调用方不需要先手工抽取音轨。服务会统一调用 FFmpeg 规范化媒体。
+
+---
+
+# 已有口播稿：生成剪辑字幕
+
+当调用方同时拥有**最终音频**和**已经确认的口播稿**时，不要再让 ASR 决定最终字幕文字，改用：
+
+```text
+POST http://127.0.0.1:8001/v1/audio/alignments
+```
+
+multipart 字段：
+
+```text
+file=<本地媒体文件>
+transcript=<正确口播稿全文>
+language=zh
+preset=voiceover
+allow_script_mismatch=false
+```
+
+处理顺序：
+
+```text
+媒体 + transcript
+→ SenseVoice 只做文稿一致性 QA
+→ pass / warning 才进入 Qwen3 Forced Aligner
+→ 字/词级时间戳
+→ 标点 + 停顿 + 长度 + 词组边界分段
+→ segments + srt
+```
+
+默认一致性阈值：
+
+- `pass`：`score >= 0.88`；
+- `warning`：`0.75 <= score < 0.88`；
+- `fail`：`score < 0.75`，默认直接 HTTP 422，不运行 Forced Aligner。
+
+`allow_script_mismatch=true` 只用于明确知道文稿有差异、仍需要诊断的场景，不建议作为业务默认值。
+
+典型返回字段：
+
+```json
+{
+  "status": "ok",
+  "text": "最终显示仍以用户提供的口播稿为准。",
+  "model": "Qwen3-ForcedAligner-0.6B",
+  "preset": "voiceover",
+  "script_match": {
+    "score": 0.95,
+    "status": "pass"
+  },
+  "aligned_units": 580,
+  "items": [],
+  "segments": [],
+  "subtitle_summary": {
+    "cue_count": 49
+  },
+  "srt": "1\r\n00:00:01,040 --> 00:00:03,520\r\n...",
+  "performance": {
+    "alignment_seconds": 19.742
+  }
+}
+```
+
+V1 对齐模式的产品边界是 **≤5 分钟、单人口播、有准确原稿**。长视频普通转写仍走 `/v1/audio/transcriptions`，不要把两种模式混为一谈。
 
 ---
 

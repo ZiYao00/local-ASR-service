@@ -4,3 +4,4 @@ uvicorn==0.52.4
 python-multipart==0.0.32
 soundfile==0.14.0
 modelscope==1.39.1
+jieba==0.42.1

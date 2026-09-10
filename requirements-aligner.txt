@@ -1,0 +1,3 @@
+# Optional subtitle forced-alignment runtime.
+# Install a CPU-compatible PyTorch build before this file.
+qwen-asr==0.0.6

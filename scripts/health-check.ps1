@@ -57,6 +57,7 @@ if (-not $health.vad -or -not $health.punctuation) {
     QueueRunning = [int]$health.queue.running
     QueueWaiting = [int]$health.queue.waiting
     Ffmpeg       = [bool]$health.ffmpeg
+    ForcedAligner = if ($health.PSObject.Properties.Name -contains 'forced_alignment') { [bool]$health.forced_alignment.ready } else { $false }
     ModelAliases = $modelIds -join ', '
     BaseUrl      = $config.BaseUrl
 }

@@ -18,6 +18,7 @@ $rootFiles = @(
     (Join-Path $root 'README.md'),
     (Join-Path $root 'deployment-report.md'),
     (Join-Path $root 'requirements-cpu.txt'),
+    (Join-Path $root 'requirements-aligner.txt'),
     (Join-Path $root 'LICENSE'),
     (Join-Path $root 'THIRD_PARTY.md')
 )

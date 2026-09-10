@@ -1,24 +1,43 @@
 # local-ASR-service 发布前验证报告
 
-更新日期：2026-08-26
+更新日期：2026-09-10
 
 ## 发布候选状态
 
-当前代码可作为 `v0.3.0` public-beta candidate。
+当前代码可作为 `v0.4.0` public-beta candidate。
 
-`local-ASR-service` 的定位不是另一个 ASR 模型或通用 FunASR Server，而是面向 Windows 本机 Agent、Skill、自动化脚本和其它工具的共享 ASR Gateway：统一处理 FFmpeg、VAD、SenseVoice、标点恢复、服务端 Queue 和稳定 API。
+`local-ASR-service` 的定位不是另一个 ASR 模型或通用 FunASR Server，而是面向 Windows 本机 Agent、Skill、自动化脚本和其它工具的共享本地语音处理 Gateway：默认统一处理 FFmpeg、VAD、SenseVoice、标点恢复、服务端 Queue 和稳定 API；当调用方已经有准确口播稿时，可选启用 Qwen3 Forced Aligner 生成剪辑字幕。
 
 ```text
-Agent / Skill / Tool
-        ↓
-local-ASR-service
-        ↓
-Server Queue
-        ↓
-FFmpeg → FSMN-VAD → SenseVoiceSmall → CT-Transformer
-        ↓
-text / raw_text / real VAD segments / TXT / SRT
+普通转写：
+媒体 → Server Queue → FFmpeg → FSMN-VAD → SenseVoiceSmall → CT-Transformer
+     → text / raw_text / real VAD segments / TXT / SRT
+
+已有口播稿字幕：
+媒体 + 正确文稿 → Server Queue → SenseVoice 文稿一致性 QA
+               → Qwen3 Forced Aligner → 字/词级时间戳
+               → 智能字幕分段 → SRT / JSON
 ```
+
+## 119 秒已有文稿字幕对齐验证
+
+2026-09-10 使用 119.302 秒真实中文口播 + 对应最终口播稿完成端到端 CPU 测试。样本包含 `bili-learning-automation`、`Obsidian`、`ComfyUI`、`AIGC`、`Markdown` 等中英混合术语。
+
+| 检查 | 结果 |
+|---|---|
+| 文稿一致性 QA | 0.9478 / pass |
+| Qwen3 Forced Aligner | 580 个字/词级单元 |
+| 时间轴 QA | 0 个逆序、0 个非法区间 |
+| Forced Alignment | 19.742 秒（正式 API 路径） |
+| 完整 API + QA + SRT/JSON | 53.588 秒 |
+| 最终 voiceover 字幕 | 49 条 |
+| 单条字幕时长 | 0.88–2.96 秒，平均 1.964 秒 |
+| 中英混合术语 | 原稿显示形式保留；`bili-learning-automation` 连字符可恢复 |
+| 错误文稿保护 | 0.0454 / fail，HTTP 422，在 Forced Aligner 前终止 |
+
+字幕分段器经过真实样本迭代后采用：原稿标点 / 真实停顿优先，长度上限兜底，中文词内部不可切，并保护 `Obsidian库` 等无停顿混合词组。最终字幕文字始终以用户原稿为准，ASR 只用于一致性 QA。
+
+V1 对齐模式明确限制为 **≤5 分钟、单人口播、有准确原稿**。普通长视频转写继续使用 SenseVoice/VAD 路线。
 
 ## 52 分钟真实媒体验证
 
@@ -101,11 +120,13 @@ Windows PowerShell 5.1 会在 `ConvertFrom-Json` 时解包单元素数组。为�
 
 ## 可重建安装
 
-新增：
+新增 / 保留：
 
-- `requirements-cpu.txt`：当前服务主要依赖版本；
-- `scripts/install-cpu.ps1`：Windows / Python 3.11 CPU 安装入口；
-- `config/local.example.json`：使用官方 ModelScope 模型 ID，新 clone 首次启动可下载到项目内缓存。
+- `requirements-cpu.txt`：主服务依赖版本，现显式包含字幕分段使用的 `jieba`；
+- `scripts/install-cpu.ps1`：Windows / Python 3.11 主 CPU 安装入口；
+- `requirements-aligner.txt`：可选 Qwen3 Forced Aligner 依赖；
+- `scripts/install-aligner-cpu.ps1`：独立 `.venv-qwen3-asr` CPU 安装入口，不自动下载模型权重；
+- `config/local.example.json`：默认 ASR 配置 + 可选 alignment 路径、时长、超时和 QA 阈值。
 
 当前开发环境：Python 3.11.15、PyTorch CPU、FunASR 1.4.3、FastAPI 0.141.1、Uvicorn 0.52.4。`pip check` 已通过。
 
@@ -125,7 +146,7 @@ Windows PowerShell 5.1 会在 `ConvertFrom-Json` 时解包单元素数组。为�
 
 - 项目自有代码与文档：MIT；
 - 仓库不分发模型权重；
-- FunASR 与默认 ModelScope 模型的许可证边界记录在 `THIRD_PARTY.md`；
+- FunASR、默认 ModelScope 模型、可选 `qwen-asr` 与 `Qwen3-ForcedAligner-0.6B` 的许可证边界记录在 `THIRD_PARTY.md`；
 - 模型许可证应以实际使用时的上游模型卡为准。
 
 ## 隐私与仓库边界
@@ -133,7 +154,7 @@ Windows PowerShell 5.1 会在 `ConvertFrom-Json` 时解包单元素数组。为�
 新增 `scripts/release-audit.ps1`，当前最终审计结果：
 
 ```text
-FilesScanned = 29
+FilesScanned = 38
 PrivacyFindings = 0
 RequiredIgnoreRules = 8
 ```
@@ -157,19 +178,23 @@ RequiredIgnoreRules = 8
 - Python compile：通过；
 - PowerShell 5.1 全脚本 parse：通过；
 - segment punctuation unit test：通过；
-- short-media smoke test：通过；
-- real multi-VAD SRT punctuation test：通过；
-- server Queue smoke test：通过；
-- `pip check`：通过；
-- release privacy / ignore audit：通过。
+- subtitle segmentation unit test：通过；
+- alignment QA helper test：通过；
+- 旧 `/v1/audio/transcriptions` 真实短媒体回归：通过；
+- 新 `/v1/audio/alignments` 119 秒真实端到端测试：通过；
+- 错误文稿 HTTP 422 提前拦截：通过；
+- 主 `.venv-cpu` `pip check`：通过；
+- 可选 `.venv-qwen3-asr` `pip check`：通过；
+- release privacy / ignore audit：38 files / 0 findings，通过。
 
 ## 发布建议
 
-当前适合发布为 `v0.3.0` / public beta，而不是直接声明 `v1.0`。
+当前适合发布为 `v0.4.0` / public beta，而不是直接声明 `v1.0`。
 
-正式 `v1.0` 前建议只保留两项外部验证：
+正式 `v1.0` 前建议保留这些外部验证：
 
 1. 在一台干净 Windows 环境从 clone 开始执行 `install-cpu.ps1`；
-2. 用修复后的版本重新跑同一条 52 分钟视频，记录 890 段 SRT 的最终 `segments_punctuated` / 标点覆盖结果。
+2. 在另一台干净环境执行可选 `install-aligner-cpu.ps1`，手动放入官方 Qwen3 Forced Aligner 模型后完成一次字幕对齐；
+3. 用修复后的版本重新跑同一条 52 分钟视频，记录 890 段 SRT 的最终 `segments_punctuated` / 标点覆盖结果。
 
-本轮修改前备份：`backups/pre-public-release-20260826-1822.zip`。
+本轮修改开始前 Git 工作区为 clean；本轮未创建新的备份包，也未执行 commit / push。

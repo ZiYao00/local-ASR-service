@@ -100,6 +100,10 @@ class AsrEngine:
         candidate = Path(self.ffmpeg_path)
         return candidate.is_file() if candidate.is_absolute() else shutil.which(self.ffmpeg_path) is not None
 
+    def normalize_media(self, input_path: Path) -> tuple[Path, Path | None]:
+        """Normalize supported media to a temporary 16 kHz mono PCM WAV."""
+        return self._normalize_media(input_path)
+
     def _normalize_media(self, input_path: Path) -> tuple[Path, Path | None]:
         candidate = Path(self.ffmpeg_path)
         ffmpeg = str(candidate) if candidate.is_absolute() and candidate.is_file() else shutil.which(self.ffmpeg_path)

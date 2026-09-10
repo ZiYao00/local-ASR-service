@@ -27,4 +27,19 @@ ModelScope pages:
 - https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
 - https://modelscope.cn/models/iic/punc_ct-transformer_cn-en-common-vocab471067-large
 
+## Optional Qwen3 Forced Aligner
+
+The subtitle-alignment feature can use the official Qwen runtime/model as an optional, separately installed component:
+
+| Component | Role | License checked 2026-09-10 |
+|---|---|---|
+| `qwen-asr` | Qwen3 ASR / Forced Aligner Python runtime | Apache License 2.0 source headers |
+| `Qwen/Qwen3-ForcedAligner-0.6B` | word/character-level forced alignment | Apache License 2.0 |
+
+Upstream model page:
+
+- https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B
+
+The repository does not redistribute this model. Users download the model into their own local `models/` directory when they explicitly enable subtitle alignment.
+
 The model licenses belong to their respective upstream projects and may change independently of this repository. The MIT license in this repository covers only the code and documentation authored for `local-ASR-service`.

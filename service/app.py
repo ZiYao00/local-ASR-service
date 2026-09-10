@@ -10,7 +10,9 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from .alignment import classify_script_match, forced_aligner_status, run_forced_alignment, script_match_score
 from .engine import AsrEngine
+from .subtitles import PRESETS, format_srt, segment_aligned_transcript, summarize_cues
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,12 +73,25 @@ def _load_config() -> dict[str, Any]:
     queue_timeout_seconds = int(data["queueTimeoutSeconds"])
     max_upload_bytes = int(data.get("maxUploadBytes", 2 * 1024 * 1024 * 1024))
     upload_chunk_bytes = int(data.get("uploadChunkBytes", 4 * 1024 * 1024))
+    forced_aligner_python = _resolve_project_path(str(data.get("forcedAlignerPython", ".venv-qwen3-asr\\Scripts\\python.exe")))
+    forced_aligner_model = _resolve_project_path(str(data.get("forcedAlignerModelPath", "models\\qwen3-forced-aligner-0.6b")))
+    forced_aligner_script = str((ROOT / "scripts" / "qwen3-forced-align.py").resolve())
+    forced_aligner_max_audio_seconds = float(data.get("forcedAlignerMaxAudioSeconds", 300.0))
+    alignment_timeout_seconds = int(data.get("alignmentTimeoutSeconds", data.get("requestTimeoutSeconds", 10800)))
+    script_match_pass_threshold = float(data.get("scriptMatchPassThreshold", 0.88))
+    script_match_fail_threshold = float(data.get("scriptMatchFailThreshold", 0.75))
     if queue_timeout_seconds <= 0:
         raise RuntimeError("queueTimeoutSeconds must be greater than zero.")
     if max_upload_bytes <= 0:
         raise RuntimeError("maxUploadBytes must be greater than zero.")
     if upload_chunk_bytes <= 0:
         raise RuntimeError("uploadChunkBytes must be greater than zero.")
+    if forced_aligner_max_audio_seconds <= 0:
+        raise RuntimeError("forcedAlignerMaxAudioSeconds must be greater than zero.")
+    if alignment_timeout_seconds <= 0:
+        raise RuntimeError("alignmentTimeoutSeconds must be greater than zero.")
+    if not 0 <= script_match_fail_threshold <= script_match_pass_threshold <= 1:
+        raise RuntimeError("Script match thresholds must satisfy 0 <= fail <= pass <= 1.")
 
     return {
         "root": str(ROOT),
@@ -93,12 +108,19 @@ def _load_config() -> dict[str, Any]:
         "max_upload_bytes": max_upload_bytes,
         "upload_chunk_bytes": upload_chunk_bytes,
         "ffmpeg_path": os.environ.get("LOCAL_ASR_FFMPEG", "ffmpeg"),
+        "forced_aligner_python": forced_aligner_python,
+        "forced_aligner_model": forced_aligner_model,
+        "forced_aligner_script": forced_aligner_script,
+        "forced_aligner_max_audio_seconds": forced_aligner_max_audio_seconds,
+        "alignment_timeout_seconds": alignment_timeout_seconds,
+        "script_match_pass_threshold": script_match_pass_threshold,
+        "script_match_fail_threshold": script_match_fail_threshold,
     }
 
 
 CONFIG = _load_config()
 ENGINE = AsrEngine(CONFIG)
-APP = FastAPI(title="local-ASR-service", version="0.3.0")
+APP = FastAPI(title="local-ASR-service", version="0.4.0")
 QUEUE = asyncio.Semaphore(1)
 STATE_LOCK = asyncio.Lock()
 RUNNING = 0
@@ -169,6 +191,11 @@ async def startup() -> None:
 
 @APP.get("/health")
 async def health() -> dict[str, Any]:
+    alignment = forced_aligner_status(
+        CONFIG["forced_aligner_python"],
+        CONFIG["forced_aligner_model"],
+        CONFIG["forced_aligner_script"],
+    )
     return {
         "status": "ok" if ENGINE.ready else "starting",
         "service": "local-ASR-service",
@@ -178,6 +205,11 @@ async def health() -> dict[str, Any]:
         "punctuation": True,
         "queue": await _queue_snapshot(),
         "ffmpeg": ENGINE.ffmpeg_ready,
+        "forced_alignment": {
+            **alignment,
+            "model_name": "Qwen3-ForcedAligner-0.6B",
+            "max_audio_seconds": CONFIG["forced_aligner_max_audio_seconds"],
+        },
     }
 
 
@@ -224,6 +256,120 @@ async def transcribe(
 
     if response_format == "text":
         return PlainTextResponse(result["text"])
+    return JSONResponse(result)
+
+
+@APP.post("/v1/audio/alignments")
+async def align_audio(
+    file: UploadFile = File(...),
+    transcript: str = Form(...),
+    language: str = Form(default="zh"),
+    preset: str = Form(default="voiceover"),
+    allow_script_mismatch: bool = Form(default=False),
+):
+    transcript = transcript.strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript must not be empty.")
+    if len(transcript) > 100_000:
+        raise HTTPException(status_code=400, detail="Transcript is too large for the alignment endpoint.")
+    if preset not in PRESETS:
+        raise HTTPException(status_code=400, detail=f"Unknown subtitle preset: {preset}")
+
+    suffix = Path(file.filename or "audio.wav").suffix.lower() or ".wav"
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported media extension: {suffix}")
+
+    aligner = forced_aligner_status(
+        CONFIG["forced_aligner_python"],
+        CONFIG["forced_aligner_model"],
+        CONFIG["forced_aligner_script"],
+    )
+    if not aligner["ready"]:
+        raise HTTPException(status_code=503, detail={"message": "Qwen3 Forced Aligner is not ready.", "status": aligner})
+
+    normalized_language = language.strip().casefold()
+    asr_language = "zh" if normalized_language in {"chinese", "zh-cn"} else (
+        "en" if normalized_language in {"english", "en-us"} else language
+    )
+
+    temp_path: Path | None = None
+    normalized_cleanup: Path | None = None
+    entered_queue = False
+    try:
+        temp_path = await _save_upload(file, suffix)
+        await _enter_queue()
+        entered_queue = True
+        try:
+            asr_result = await asyncio.to_thread(ENGINE.transcribe, temp_path, asr_language)
+            match_score = script_match_score(transcript, str(asr_result.get("text") or ""))
+            match_status = classify_script_match(
+                match_score,
+                pass_threshold=CONFIG["script_match_pass_threshold"],
+                fail_threshold=CONFIG["script_match_fail_threshold"],
+            )
+            match_payload = {
+                "score": match_score,
+                "status": match_status,
+                "pass_threshold": CONFIG["script_match_pass_threshold"],
+                "fail_threshold": CONFIG["script_match_fail_threshold"],
+                "asr_text": asr_result.get("text"),
+            }
+            if match_status == "fail" and not allow_script_mismatch:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": "Transcript differs too much from the spoken audio; forced alignment was not run.",
+                        "script_match": match_payload,
+                    },
+                )
+
+            normalized_audio, normalized_cleanup = await asyncio.to_thread(ENGINE.normalize_media, temp_path)
+            alignment_result = await asyncio.to_thread(
+                run_forced_alignment,
+                audio_path=normalized_audio,
+                transcript=transcript,
+                language=language,
+                python_path=CONFIG["forced_aligner_python"],
+                model_path=CONFIG["forced_aligner_model"],
+                script_path=CONFIG["forced_aligner_script"],
+                temp_dir=CONFIG["temp_dir"],
+                max_audio_seconds=CONFIG["forced_aligner_max_audio_seconds"],
+                timeout_seconds=CONFIG["alignment_timeout_seconds"],
+            )
+            cues = segment_aligned_transcript(transcript, alignment_result["items"], preset)
+            cue_summary = summarize_cues(cues)
+            result = {
+                "status": "ok",
+                "text": transcript,
+                "language": language,
+                "duration": alignment_result.get("audio_duration_seconds"),
+                "model": "Qwen3-ForcedAligner-0.6B",
+                "preset": preset,
+                "script_match": match_payload,
+                "aligned_units": alignment_result.get("aligned_units"),
+                "items": alignment_result["items"],
+                "segments": cues,
+                "subtitle_summary": cue_summary,
+                "srt": format_srt(cues),
+                "performance": {
+                    "model_load_seconds": alignment_result.get("model_load_seconds"),
+                    "alignment_seconds": alignment_result.get("alignment_seconds"),
+                    "alignment_total_seconds": alignment_result.get("total_seconds"),
+                },
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        if normalized_cleanup is not None:
+            normalized_cleanup.unlink(missing_ok=True)
+        if entered_queue:
+            await _leave_queue()
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        await file.close()
+
     return JSONResponse(result)
 
 

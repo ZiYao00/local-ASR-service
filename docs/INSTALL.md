@@ -128,6 +128,39 @@ config/local.json
 
 ---
 
+## 可选：安装“已有口播稿字幕对齐”环境
+
+普通 ASR 不需要这一层。只有在你希望用“最终口播音频 + 已确认口播稿”生成剪辑字幕时才安装。
+
+```powershell
+.\scripts\install-aligner-cpu.ps1
+```
+
+这个脚本会：
+
+1. 创建或复用独立的 `.venv-qwen3-asr`；
+2. 安装 CPU PyTorch；
+3. 安装 `requirements-aligner.txt` 中固定的 `qwen-asr`；
+4. 验证 `Qwen3ForcedAligner` 可以导入。
+
+它**不会自动下载模型权重**。请单独下载官方 `Qwen/Qwen3-ForcedAligner-0.6B`，把完整模型目录放到：
+
+```text
+models\qwen3-forced-aligner-0.6b\
+```
+
+至少应存在：
+
+```text
+models\qwen3-forced-aligner-0.6b\model.safetensors
+```
+
+这样设计是为了避免普通 ASR 用户承担额外约 1.8 GB 模型和 Qwen 依赖，也避免安装脚本因为大模型网络下载失败而破坏主服务安装。
+
+默认 V1 对齐边界是 **≤300 秒、单人口播、有准确原稿**。这些值可以通过 `config/local.json` 的可选 alignment 配置覆盖。
+
+---
+
 ## 第一次启动
 
 安装完成后执行：
@@ -195,6 +228,39 @@ BaseUrl      : http://127.0.0.1:8001
 
 默认会在媒体文件旁创建 `ASR_Output` 文件夹。
 
+### 外部文件不需要复制进仓库
+
+日常使用时，媒体和口播稿可以放在任意可访问的 Windows 本地路径，例如：
+
+```text
+D:\VideoProject\Episode01\
+├─ voice.mp3
+├─ script.txt
+└─ ASR_Output\
+```
+
+直接把外部路径传给脚本即可：
+
+```powershell
+.\scripts\align-subtitles.ps1 "D:\VideoProject\Episode01\voice.mp3" "D:\VideoProject\Episode01\script.txt" -Preset voiceover
+```
+
+不需要先把文件复制到 `local-ASR-service\input`。真实业务结果默认跟随源媒体写入旁边的 `ASR_Output`，这样字幕会继续属于原业务项目。
+
+如果业务项目需要自己管理产物位置，可以显式指定：
+
+```powershell
+.\scripts\align-subtitles.ps1 "D:\VideoProject\Episode01\voice.mp3" "D:\VideoProject\Episode01\script.txt" -OutputDirectory "D:\VideoProject\Episode01\subtitles" -Preset voiceover
+```
+
+只有开发、调试或项目内测试时，才建议使用：
+
+```powershell
+.\scripts\align-subtitles.ps1 "D:\VideoProject\Episode01\voice.mp3" "D:\VideoProject\Episode01\script.txt" -UseProjectOutput -Preset voiceover
+```
+
+此时结果进入仓库的 `output/`。仓库的 `input/` 和 `output/` 都只是本机开发/测试工作区，不作为所有真实项目共用的素材中心。
+
 ---
 
 ## 日常使用
@@ -216,6 +282,12 @@ BaseUrl      : http://127.0.0.1:8001
 
 ```powershell
 .\bin\asr.cmd transcribe "C:\media\demo.mp4"
+```
+
+已有准确口播稿并且可选 Forced Aligner 已就绪时：
+
+```powershell
+.\scripts\align-subtitles.ps1 "C:\media\voice.mp3" "C:\media\script.txt" -Preset voiceover
 ```
 
 停止：
