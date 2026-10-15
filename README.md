@@ -65,6 +65,22 @@
 
 ## 2. 启动服务
 
+日常使用可以直接双击项目根目录的 `service.bat`。首页显示服务状态、PID、模型、任务队列、项目目录与日志位置；输入编号并回车即可启动、停止、重启、检查状态、打开接口文档或日志目录。每次操作后返回首页时会保留操作结果，也可以在终端运行：
+
+```powershell
+.\service.bat start
+.\service.bat status
+.\service.bat restart
+.\service.bat stop
+.\service.bat open
+.\service.bat start-open
+.\service.bat logs
+```
+
+启动和重启会等待服务就绪（最多 120 秒）；重复启动会复用已有服务。后台服务在菜单窗口关闭后继续运行，停止时使用菜单或 `service.bat stop`。
+
+原有 PowerShell 入口仍可直接使用：
+
 ```powershell
 .\scripts\start-server.ps1
 .\scripts\health-check.ps1 -WaitSeconds 120

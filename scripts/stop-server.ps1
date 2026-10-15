@@ -36,6 +36,13 @@ if (-not ($legacyOwner -or $newOwner)) {
     throw "Port $($config.Port) is occupied by an unexpected service response. Nothing was stopped."
 }
 
+# Do not interrupt active transcriptions or forced-alignment subprocesses.
+if ($health.PSObject.Properties.Name -contains 'queue' -and $null -ne $health.queue) {
+    if ([int]$health.queue.running -gt 0 -or [int]$health.queue.waiting -gt 0) {
+        throw "ASR queue is busy (running=$($health.queue.running), waiting=$($health.queue.waiting)). Nothing was stopped."
+    }
+}
+
 $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $($listener.OwningProcess)" -ErrorAction Stop
 $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($processInfo.ParentProcessId)" -ErrorAction Stop
 if ($parent.ExecutablePath -notin @($config.CpuPython, $config.GpuPython)) {

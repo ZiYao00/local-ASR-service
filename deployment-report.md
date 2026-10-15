@@ -1,6 +1,6 @@
 # local-ASR-service 发布前验证报告
 
-更新日期：2026-09-10
+更新日期：2026-10-15（包含 2026-09-10 发布前验证记录）
 
 ## 发布候选状态
 
@@ -186,6 +186,20 @@ RequiredIgnoreRules = 8
 - 主 `.venv-cpu` `pip check`：通过；
 - 可选 `.venv-qwen3-asr` `pip check`：通过；
 - release privacy / ignore audit：38 files / 0 findings，通过。
+
+## 2026-10-15 轻量资源维护与请求生命周期修复
+
+此次维护保留现有 SenseVoice / VAD / 标点与 Qwen3 Forced Aligner 架构，不引入 Worker、不更换模型、不修改依赖与本机配置。修复请求取消后的 Queue 与临时文件所有权、上传中途取消后的清理，增加带 `Content-Length` 的明显超限请求前置拒绝；正常停止命令遇到忙碌队列时拒绝停止。未声明大小的 multipart 请求仍由框架先解析，尚不具备完整的入口级流式总大小限制。
+
+- 新增 `tests/test_request_lifecycle.py`：10 项全部通过，包括等待／运行中取消、字幕对齐取消、超时、上传清理与 HTTP 返回契约；
+- 原有 3 个 Python 测试脚本分别通过；PowerShell 全脚本解析检查通过；
+- 正式 8001 服务重启后，17.972 秒真实媒体普通转写 Smoke Test 通过，122 字符，标点回写正常；
+- 正式对齐接口的错误文稿拦截返回 HTTP 422，未启动 Forced Aligner，符合原有 QA 行为；
+- 用正确文稿进行的一次真实 Forced Aligner 验证超过 80 秒命令时限，**没有取得可确认的成功响应，不能记为通过**；之后主服务健康、Queue 为 0/0、无残留对齐子进程，临时目录仅保留既有 `jieba.cache`；
+- 隐私审计：40 文件 / 0 findings / 8 ignore rules，通过；
+- 原有未提交的 `README.md`、`scripts/service.ps1`、`service.bat` 保留并纳入后续授权的本地提交；维护验收时未自行提交或推送，也未删除模型、日志、备份或目录。
+
+后续如要发布此修复版本，应先做一次可观测的真实成功字幕对齐回归，并评估当前环境的 CPU 对齐耗时。暂不建议因此引入独立 Worker 或反复尝试高负载生成。
 
 ## 发布建议
 

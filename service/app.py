@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .alignment import classify_script_match, forced_aligner_status, run_forced_alignment, script_match_score
@@ -17,6 +18,7 @@ from .subtitles import PRESETS, format_srt, segment_aligned_transcript, summariz
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL_CONFIG = ROOT / "config" / "local.json"
+LOGGER = logging.getLogger(__name__)
 
 
 def _resolve_project_path(value: str) -> str:
@@ -122,7 +124,6 @@ CONFIG = _load_config()
 ENGINE = AsrEngine(CONFIG)
 APP = FastAPI(title="local-ASR-service", version="0.4.0")
 QUEUE = asyncio.Semaphore(1)
-STATE_LOCK = asyncio.Lock()
 RUNNING = 0
 WAITING = 0
 
@@ -130,30 +131,78 @@ SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".webm", ".mp4"
 
 
 async def _queue_snapshot() -> dict[str, int]:
-    async with STATE_LOCK:
-        return {"running": RUNNING, "waiting": WAITING}
+    # These counters are modified on the single event-loop thread.
+    return {"running": RUNNING, "waiting": WAITING}
 
 
 async def _enter_queue() -> None:
     global RUNNING, WAITING
-    async with STATE_LOCK:
-        WAITING += 1
+    WAITING += 1
     try:
         await asyncio.wait_for(QUEUE.acquire(), timeout=CONFIG["queue_timeout_seconds"])
     except TimeoutError as exc:
         raise HTTPException(status_code=503, detail="Timed out waiting for the local ASR queue.") from exc
     finally:
-        async with STATE_LOCK:
-            WAITING -= 1
-    async with STATE_LOCK:
-        RUNNING += 1
+        WAITING -= 1
+    # No suspension or cancellation point after acquiring the semaphore.
+    RUNNING += 1
 
 
-async def _leave_queue() -> None:
+def _leave_queue() -> None:
     global RUNNING
-    async with STATE_LOCK:
-        RUNNING -= 1
+    RUNNING -= 1
     QUEUE.release()
+
+
+async def _execute_queued(
+    operation: Callable[[], Awaitable[Any]], uploaded_path: Path
+) -> Any:
+    """Bind queue and temp-file lifetime to the job, not the HTTP waiter.
+
+    Cancellation cannot interrupt an already-running asyncio.to_thread()
+    operation. A cancelled HTTP caller detaches from active processing; a
+    queued job that has not started may be cancelled safely.
+    """
+    state = {"running": False, "detached": False}
+
+    async def job() -> Any:
+        acquired = False
+        try:
+            await _enter_queue()
+            acquired = True
+            state["running"] = True
+            return await operation()
+        finally:
+            try:
+                uploaded_path.unlink(missing_ok=True)
+            finally:
+                if acquired:
+                    _leave_queue()
+
+    task = asyncio.create_task(job())
+
+    def finished(done: asyncio.Task[Any]) -> None:
+        # A task cancelled before it starts never reaches the job's finally.
+        try:
+            uploaded_path.unlink(missing_ok=True)
+        except OSError:
+            LOGGER.exception("Could not remove the ASR staged upload")
+        if not done.cancelled():
+            error = done.exception()
+            if error is not None and state["detached"]:
+                LOGGER.error(
+                    "ASR job failed after client cancellation",
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+    task.add_done_callback(finished)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        state["detached"] = True
+        if not state["running"]:
+            task.cancel()
+        raise
 
 
 async def _save_upload(file: UploadFile, suffix: str) -> Path:
@@ -179,9 +228,33 @@ async def _save_upload(file: UploadFile, suffix: str) -> Path:
         if received == 0:
             raise HTTPException(status_code=400, detail="Uploaded media file is empty.")
         return temp_path
-    except Exception:
+    except BaseException:
+        # CancelledError is not an Exception on Python 3.11.
         temp_path.unlink(missing_ok=True)
         raise
+
+
+@APP.middleware("http")
+async def reject_obviously_oversized_upload(request: Request, call_next):
+    """Preflight requests with Content-Length before multipart parsing/spooling.
+
+    The existing streamed file-byte check still applies without this header.
+    """
+    if request.method == "POST" and request.url.path in {
+        "/v1/audio/transcriptions", "/v1/audio/alignments"
+    }:
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                size = int(declared)
+            except ValueError:
+                return JSONResponse({"detail": "Invalid Content-Length."}, status_code=400)
+            if size < 0:
+                return JSONResponse({"detail": "Invalid Content-Length."}, status_code=400)
+            # Allow room for multipart framing and short form fields.
+            if size > CONFIG["max_upload_bytes"] + 1024 * 1024:
+                return JSONResponse({"detail": "Request exceeds the upload size limit."}, status_code=413)
+    return await call_next(request)
 
 
 @APP.on_event("startup")
@@ -237,21 +310,18 @@ async def transcribe(
     if response_format not in {"text", "json", "verbose_json"}:
         raise HTTPException(status_code=400, detail=f"Unsupported response_format: {response_format}")
 
-    temp_path: Path | None = None
-    entered_queue = False
     try:
         temp_path = await _save_upload(file, suffix)
-        await _enter_queue()
-        entered_queue = True
         try:
-            result = await asyncio.to_thread(ENGINE.transcribe, temp_path, language)
+            result = await _execute_queued(
+                lambda: asyncio.to_thread(ENGINE.transcribe, temp_path, language),
+                temp_path,
+            )
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
-        if entered_queue:
-            await _leave_queue()
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
         await file.close()
 
     if response_format == "text":
@@ -292,13 +362,14 @@ async def align_audio(
         "en" if normalized_language in {"english", "en-us"} else language
     )
 
-    temp_path: Path | None = None
-    normalized_cleanup: Path | None = None
-    entered_queue = False
     try:
         temp_path = await _save_upload(file, suffix)
-        await _enter_queue()
-        entered_queue = True
+    except BaseException:
+        await file.close()
+        raise
+
+    async def align_job() -> dict[str, Any]:
+        normalized_cleanup: Path | None = None
         try:
             asr_result = await asyncio.to_thread(ENGINE.transcribe, temp_path, asr_language)
             match_score = script_match_score(transcript, str(asr_result.get("text") or ""))
@@ -357,17 +428,19 @@ async def align_audio(
                     "alignment_total_seconds": alignment_result.get("total_seconds"),
                 },
             }
+        finally:
+            if normalized_cleanup is not None:
+                normalized_cleanup.unlink(missing_ok=True)
+        return result
+
+    try:
+        try:
+            result = await _execute_queued(align_job, temp_path)
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
     finally:
-        if normalized_cleanup is not None:
-            normalized_cleanup.unlink(missing_ok=True)
-        if entered_queue:
-            await _leave_queue()
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
         await file.close()
 
     return JSONResponse(result)
