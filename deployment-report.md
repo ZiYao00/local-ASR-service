@@ -1,10 +1,10 @@
 # local-ASR-service 发布前验证报告
 
-更新日期：2026-10-15（包含 2026-09-10 发布前验证记录）
+更新日期：2026-10-16（保留 2026-09-10 / 2026-10-15 的历史测试记录）
 
 ## 发布候选状态
 
-当前代码可作为 `v0.4.0` public-beta candidate。
+2026-09-10 的历史候选版本为 `v0.4.0`；本轮改进形成尚未发布的 `v0.5.0-beta` 候选。
 
 `local-ASR-service` 的定位不是另一个 ASR 模型或通用 FunASR Server，而是面向 Windows 本机 Agent、Skill、自动化脚本和其它工具的共享本地语音处理 Gateway：默认统一处理 FFmpeg、VAD、SenseVoice、标点恢复、服务端 Queue 和稳定 API；当调用方已经有准确口播稿时，可选启用 Qwen3 Forced Aligner 生成剪辑字幕。
 
@@ -203,7 +203,7 @@ RequiredIgnoreRules = 8
 
 ## 发布建议
 
-当前适合发布为 `v0.4.0` / public beta，而不是直接声明 `v1.0`。
+历史 `v0.4.0` 已作为私有 Release 存在；新的 `v0.5.0-beta` 不应在外部清洁 Windows 安装和仓库公开审查完成前直接视为正式版。
 
 正式 `v1.0` 前建议保留这些外部验证：
 
@@ -211,4 +211,42 @@ RequiredIgnoreRules = 8
 2. 在另一台干净环境执行可选 `install-aligner-cpu.ps1`，手动放入官方 Qwen3 Forced Aligner 模型后完成一次字幕对齐；
 3. 用修复后的版本重新跑同一条 52 分钟视频，记录 890 段 SRT 的最终 `segments_punctuated` / 标点覆盖结果。
 
-本轮修改开始前 Git 工作区为 clean；本轮未创建新的备份包，也未执行 commit / push。
+上文指 2026-09-10 历史验证阶段；最新构建、测试结果见下方 2026-10-16 记录。
+
+## 2026-10-16：v0.5.0-beta Agent 安装与 FFmpeg 内置化
+
+本轮发布候选改动范围：固定 BtbN 2026-09-30 Windows x64 LGPL FFmpeg 构建并在 `tools/ffmpeg/` 使用，源码仓库不跟踪二进制，Windows 分发包带有 ffmpeg.exe / ffprobe.exe / 上游 LICENSE.txt / SHA-256 来源记录。克隆源码的用户使用准备脚本下载并校验固定构建，无须系统级 FFmpeg。基础三模型安装时使用 ModelScope 官方 SDK 下载或复用现有缓存；可选 Forced Aligner 只有显式安装时下载；实验 Qwen3-ASR 仍独立按需。模型均不进入 Git 或 Windows ZIP。
+
+为 Agent 增加 `AGENTS.md`，重写 README、安装与手动模型下载教程，增加纯离线的 `-VerifyOnly` 环境检查，安装脚本通过 .NET Process 获取 Python 退出码，避免部分嵌套 Agent Shell 对 `LASTEXITCODE` 的不一致。Smoke Test 不再要求私有 `input/test1.mp4`：Windows 自带语音合成可生成短音频，受限系统可以指定已有音频。
+
+已确认：
+- 固定 FFmpeg LGPL archive SHA-256 正确，源代码提交为 `6ae491a26c8320d1bbfdc3f137b1ea1e9989afaa`；项目内 `ffmpeg.exe` 与 `ffprobe.exe` 独立执行成功，未启用 GPL/nonfree 编译项；准备脚本的 `prepare/verify` 均通过；
+- `install-cpu.ps1 -VerifyOnly`、`install-aligner-cpu.ps1 -VerifyOnly` 均通过；模型缓存成功复用，没有重复下载/升级依赖；
+- Python 请求生命周期 10 项全部通过，原有 alignment、标点回写、字幕分段脚本通过，PowerShell 解析通过；
+- 内置 FFmpeg 正式启动 `127.0.0.1:8001` 后 `/health`、17.972 秒真实短媒体普通转写（122 字符）通过；
+- 无私人测试素材的自动合成语音 Smoke Test 通过：5.033 秒，47 字符；
+- 正确原稿 + 119.302 秒真实中文音频重新通过 Forced Aligner：匹配 0.9478/pass，580 个对齐单元，49 条字幕，完整时间 103.926 秒，实际对齐 21.14 秒；
+- 发布 ZIP 结构已验证包含 FFmpeg/ffprobe 与许可资料，不包含 `models/`、`.venv/`、`runtime/`、`input/`、`output/`、`config/local.json` 等；
+- `release-audit.ps1 -IncludeHistory` 的扩展扫描为 48 文件 / 0 findings / 9 ignore rules。Git 全部 4 个历史提交的文本内容扫描已完成，既定隐私规则命中 0 项（这不代替人工安全复核）；
+- 完成测试后，ASR 服务已恢复到原先的关闭状态。
+
+**限制：** 尚未在全新 Windows 10/11 机器测试从 clone 开始的首次网络安装；当前运行机只验证了现有环境的复用与真实 API。Git 全历史自动扫描已完成；公开仓库前仍需进行许可交付的人工复核。本轮尚未执行 Git commit/push、修改 GitHub 可见性或发布 Release。
+
+## 2026-10-16：模型完整性与下载恢复离线回归
+
+- 修复 `scripts/prepare-models.py` 中 `complete_qwen()` 只按 `model.safetensors > 100 MB` 判定完整的问题。现在会检查 Qwen3 模型的必要配置及词表文件、JSON 合法性，并通过 SafeTensors 头部的张量范围与实际文件长度一致性判断截断/损坏文件；只读取少量头部数据，不加载模型权重。这**不是**逐字节 SHA-256 校验。
+- 新增 `tests/test_model_preparation.py`：13 项纯内存/Mock 测试全部通过。覆盖合法缓存复用、伪造大文件、头部异常、权重截断、配套文件缺失、错误 JSON、离线拒绝下载、模拟网络失败/再次准备、下载器返回不完整文件、ModelScope 离线缓存与在线缓存未命中回退。运行过程不请求模型站点、不写入或删除真实模型。
+- 原有请求生命周期 10 项全部通过（自动发现测试合计 **23 passed**）；原有字幕/对齐/标点三个脚本通过；PowerShell 脚本解析及 `git diff --check` 通过。
+- 使用已有模型实际执行 `prepare-models.py --offline`：ModelScope 基础三模型、Qwen3 Forced Aligner、Qwen3-ASR 均通过新检查，未联网或重新下载。
+- `install-cpu.ps1 -VerifyOnly` 与 `install-aligner-cpu.ps1 -VerifyOnly` **串行**执行成功，分别约 43 秒与 36 秒。并行执行曾触发 CodexPro 的 55 秒命令超时，核查后无残留 ASR 检查进程；后续建议不要并行执行两套依赖导入验证。
+- 发布隐私审计：49 文件 / 0 findings / 9 ignore rules；ASR 服务保持关闭。
+- 保留未提交文件和原有缓存。**未进行首次联网下载端到端测试**，模拟的 SDK 恢复不代表实际下载服务一定能修复已经被元数据误标为完成的损坏缓存；遇到该情况应按报错检查模型目录及 SDK 缓存元数据，不能擅自清理权重。
+- 之前生成的 `v0.5.0-beta-20261016-final-windows-x64.zip` 早于本轮校验代码和新测试，不能作为对外发布产物。
+
+## 2026-10-16：公开 Beta 前清理与收尾
+
+- 经用户授权，将项目中的 `backups/`（五份历史备份）、`input/` 和 `output/`（旧测试媒体与测试结果）、`runtime/test/`、`runtime/release/`（三个旧 ZIP）、`runtime/downloads/`（已安装 FFmpeg 的下载缓存）及 `logs/` 移入 **Windows 系统回收站**，未永久删除。旧测试工具 `queue-smoke-test.ps1` 已调整为显式接收输入，避免默认引用不再附带的私人媒体。
+- 保留 `models/`、`.venv*`、`runtime/cache/`、`runtime/temp/`、`tools/ffmpeg/`、`config/local.json` 与源码 `tests/`，不会为安装/发布而重新下载模型或运行耗时对齐。
+- Windows 发布包中包含项目自带 FFmpeg/ffprobe、原始 BtbN LGPL 文本，以及与精确 FFmpeg 源码版本对应的 GPL/LGPL 上游许可文本和许可指引；`THIRD_PARTY.md` 标明二进制来源、SHA-256、对应源码与构建项目链接。
+- 本次公开 Beta 尚未进行全新 Windows 机器从零下载安装的实际联网验证；这是已知限制，不应宣传为已验收通过。
+- 代码与文档完成最终验收后，发布包应由最新已提交源码生成；正式分发包不能混用之前的 ZIP。

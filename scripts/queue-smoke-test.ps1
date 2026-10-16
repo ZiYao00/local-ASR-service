@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory, Position = 0)]
+    [ValidateNotNullOrEmpty()]
     [string]$InputPath,
     [int]$ObserveTimeoutSeconds = 60
 )
@@ -8,9 +10,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
-if ([string]::IsNullOrWhiteSpace($InputPath)) {
-    $InputPath = Join-Path $root 'input\test2.mp4'
-}
+# Require a user-provided longer voice clip; private input/test2.mp4 is not distributed.
 $cli = Join-Path $PSScriptRoot 'asr.ps1'
 $inputFile = (Get-Item -LiteralPath $InputPath -ErrorAction Stop).FullName
 . (Join-Path $root 'config\environment.ps1')

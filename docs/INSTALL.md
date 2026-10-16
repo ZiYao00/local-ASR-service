@@ -1,402 +1,183 @@
-# local-ASR-service 安装教程
+# local-ASR-service 安装教程（Windows x64 / Agent 优先）
 
-这份教程面向第一次使用 `local-ASR-service` 的用户。
+这份文档是安装与恢复操作的权威入口。项目依赖 Windows 10/11、Python 3.11、可访问 Python/PyTorch/模型来源的网络、足够的磁盘空间。**FFmpeg/ffprobe 由项目准备，用户不需要另行安装 FFmpeg 或修改系统 PATH。**
 
-## 最推荐的安装方式：交给 Agent
+## 0. 在开始前
 
-**推荐使用 Codex、Claude Code、WorkBuddy、Hermes 或其它具备本地终端权限的 Agent 完成安装。**
+- 安装、下载、首次启动属于可能持续较久的操作。Agent 应确认用户已授权安装与网络下载；若 Python 3.11 尚未安装，应明确告知并获得系统级安装授权。
+- 优先在 Windows PowerShell 5.1 或更新版本执行。项目使用独立 `.venv-cpu`，不改变其他 Agent 的 Python 环境。
+- 机器已有服务时先检查 `service.bat status`；不要因为 API 暂时没有响应就重复安装、强制停止其他监听进程。
+- 不运行 GPU 安装，除非用户明确要求。模型缓存及运行数据绝不进入 Git。
 
-原因很简单：这个项目本身已经提供自动安装脚本，用户没有必要手工创建虚拟环境、逐个安装 Python 包、查模型目录或处理依赖冲突。Agent 只需要负责检查系统前置条件，然后运行项目提供的脚本并完成验收。
+## 1. 最简安装（基础 ASR）
 
-不推荐照着网上教程逐条执行 `pip install`。手工安装最容易出现 Python 版本、CPU/GPU PyTorch、FFmpeg PATH 和模型缓存位置不一致的问题。
-
-### 可以直接复制给 Agent 的安装任务
-
-把仓库克隆到本机后，将下面这段内容发给 Agent：
-
-```text
-请帮我安装并验证当前 local-ASR-service 项目。
-
-要求：
-1. 先阅读 README.md 和 docs/INSTALL.md，按项目现有设计执行，不要另起一套 ASR 环境。
-2. 当前公开版以 Windows + CPU 为默认方案，不要擅自改成 GPU。
-3. 检查 Python 3.11 和 FFmpeg。缺少时可以使用当前机器可用的正常安装方式补齐，并确保 ffmpeg.exe 可以被系统找到。
-4. 不要手工逐个安装项目 Python 依赖，优先运行：
-   .\scripts\install-cpu.ps1
-5. 安装完成后启动服务：
-   .\scripts\start-server.ps1
-6. 等待模型加载并检查：
-   .\scripts\health-check.ps1 -WaitSeconds 120
-7. 如果项目内存在可用测试媒体，再运行：
-   .\scripts\smoke-test.ps1
-8. 最后告诉我：Python 版本、FunASR 是否可用、FFmpeg 是否可用、服务地址、health 结果，以及是否完成测试。
-
-重要边界：
-- 不要把 .venv、models、runtime、logs、input、output、backups 或 config/local.json 提交到 Git。
-- 不要修改项目业务代码，除非现有安装流程确实报错；如果报错，先分析原因再决定是否需要修改。
-- 不要下载或复制另一套重复的 ASR 项目。
-```
-
-如果 Agent 可以访问整个仓库，这通常就是最省事的安装方式。
-
----
-
-## 安装前需要什么
-
-公开 CPU 方案主要面向：
-
-- Windows 10 / 11；
-- Python 3.11；
-- FFmpeg；
-- 可正常访问 Python / PyTorch / ModelScope 下载源的网络；
-- 足够的磁盘空间保存 Python 环境与模型。
-
-GPU **不是必需条件**。默认教程只介绍 CPU 方案。
-
-### 为什么固定 Python 3.11
-
-当前项目是在 Python 3.11 环境完成主要验证的。安装脚本会检查版本，避免在其它 Python 大版本上生成一个表面能安装、实际运行不稳定的环境。
-
-### FFmpeg 做什么
-
-服务接收到 MP4、MOV、MKV、MP3 等媒体后，会统一通过 FFmpeg 规范化为 16 kHz 单声道 WAV，再交给 ASR Pipeline。
-
-因此 FFmpeg 属于系统前置依赖，不建议绕过。
-
----
-
-## 仓库里不会包含什么
-
-GitHub 仓库只应该保存：
-
-- 项目源码；
-- PowerShell / CMD 工具脚本；
-- 示例配置；
-- requirements；
-- 测试代码；
-- 文档。
-
-下面这些内容是**每台机器本地生成或下载的运行数据，不应该上传 GitHub**：
-
-```text
-.venv*/
-models/
-runtime/
-logs/
-input/
-output/
-backups/
-config/local.json
-```
-
-这意味着：开发者电脑上已经安装好的 Python 环境和已经下载好的模型，不会随仓库一起发布。
-
-新用户 clone 后，由安装脚本和首次启动流程在自己的电脑上建立这些内容。
-
----
-
-## 自动安装流程
-
-如果不用 Agent，也不要手工逐个装包。最简方式是在仓库根目录打开 PowerShell，然后只执行：
+仓库根目录：
 
 ```powershell
 .\scripts\install-cpu.ps1
-```
-
-脚本会自动完成项目内部的 Python 环境准备：
-
-1. 检查 Python 3.11；
-2. 创建或复用 `.venv-cpu`；
-3. 安装 CPU 版 PyTorch / torchaudio；
-4. 安装 `requirements-cpu.txt` 中的服务依赖；
-5. 首次安装时从 `config/local.example.json` 创建本机 `config/local.json`；
-6. 检查 FFmpeg 是否能被找到；
-7. 验证主要 Python 依赖是否可以正常导入。
-
-### 安装脚本不会做什么
-
-它不会：
-
-- 上传任何本地文件；
-- 把模型写入 Git；
-- 修改你的业务项目；
-- 自动切换到 GPU；
-- 覆盖已经存在的 `config/local.json`；
-- 删除已经存在的 `.venv-cpu`。
-
-如果 Python 3.11 或 FFmpeg 本身不存在，推荐让 Agent 帮你补齐系统前置条件，再重新运行安装脚本。
-
----
-
-## 可选：安装“已有口播稿字幕对齐”环境
-
-普通 ASR 不需要这一层。只有在你希望用“最终口播音频 + 已确认口播稿”生成剪辑字幕时才安装。
-
-```powershell
-.\scripts\install-aligner-cpu.ps1
-```
-
-这个脚本会：
-
-1. 创建或复用独立的 `.venv-qwen3-asr`；
-2. 安装 CPU PyTorch；
-3. 安装 `requirements-aligner.txt` 中固定的 `qwen-asr`；
-4. 验证 `Qwen3ForcedAligner` 可以导入。
-
-它**不会自动下载模型权重**。请单独下载官方 `Qwen/Qwen3-ForcedAligner-0.6B`，把完整模型目录放到：
-
-```text
-models\qwen3-forced-aligner-0.6b\
-```
-
-至少应存在：
-
-```text
-models\qwen3-forced-aligner-0.6b\model.safetensors
-```
-
-这样设计是为了避免普通 ASR 用户承担额外约 1.8 GB 模型和 Qwen 依赖，也避免安装脚本因为大模型网络下载失败而破坏主服务安装。
-
-默认 V1 对齐边界是 **≤300 秒、单人口播、有准确原稿**。这些值可以通过 `config/local.json` 的可选 alignment 配置覆盖。
-
----
-
-## 第一次启动
-
-安装完成后执行：
-
-```powershell
-.\scripts\start-server.ps1
-```
-
-然后等待服务真正完成模型加载：
-
-```powershell
+.\service.bat start
 .\scripts\health-check.ps1 -WaitSeconds 120
-```
-
-第一次启动可能需要下载：
-
-- SenseVoiceSmall；
-- FSMN-VAD；
-- CT-Transformer punctuation。
-
-它们会进入本机项目的模型缓存，不进入 Git。
-
-模型已经存在时，之后启动会直接使用本地文件。
-
-### 为什么要等待 120 秒
-
-CPU 冷启动需要把三个模型加载进内存。开发机实测约需 60–70 秒，因此不要在刚执行 `start-server.ps1` 后立刻把“端口还没打开”判断成启动失败。
-
-当健康检查成功时，你应该看到类似：
-
-```text
-Status       : ok
-Service      : local-ASR-service
-Device       : cpu
-Model        : SenseVoiceSmall
-Vad          : True
-Punctuation  : True
-QueueRunning : 0
-QueueWaiting : 0
-Ffmpeg       : True
-BaseUrl      : http://127.0.0.1:8001
-```
-
----
-
-## 做一次测试
-
-如果仓库里已经准备了本地测试媒体，可以运行：
-
-```powershell
 .\scripts\smoke-test.ps1
 ```
 
-或者直接用自己的媒体：
+`install-cpu.ps1` 按顺序：检查 Python 3.11 → 创建/复用 `.venv-cpu` → 安装已验证的 CPU PyTorch 和项目依赖 → 准备本地 FFmpeg/ffprobe → 下载或复用 SenseVoiceSmall / FSMN-VAD / CT-Transformer → `pip check`。
+
+**三个独立成功标准：** 安装依赖成功、健康检查就绪、提交真实音频转写成功。仅执行完 `pip install` 不能宣称 ASR 部署完成。
+
+首个模型下载可能超过 120 秒；安装流程负责完成下载，随后服务启动的等待时间才以 120 秒为默认值。失败时检查准确的下载错误，不要重复启动或清空缓存。
+
+新仓库不包含私有 `input/test1.mp4`。`smoke-test.ps1` 默认尝试用 Windows 自带的语音合成生成小型英文语音样本进行真实识别；如果系统缺少语音合成组件，请使用：
 
 ```powershell
-.\bin\asr.cmd transcribe "C:\media\demo.mp4"
+.\scripts\smoke-test.ps1 -InputPath "C:\media\short-voice.wav"
 ```
 
-需要输出 TXT / SRT：
+### 无副作用的安装检查（推荐 Agent 日常使用）
+
+如果机器已经安装过本项目，只检查现有环境而不重新运行 pip：
 
 ```powershell
-.\scripts\transcribe-file.ps1 "C:\media\demo.mp4"
+.\scripts\install-cpu.ps1 -VerifyOnly
+.\scripts\install-aligner-cpu.ps1 -VerifyOnly
 ```
 
-默认会在媒体文件旁创建 `ASR_Output` 文件夹。
+第二条只适用于已经显式安装了 Forced Aligner 的机器，普通转写用户无需运行。该模式只校验现有 Python、依赖、模型与项目内 FFmpeg，不会联网下载或修改运行环境。
 
-### 外部文件不需要复制进仓库
+## 2. FFmpeg 内置与恢复
 
-日常使用时，媒体和口播稿可以放在任意可访问的 Windows 本地路径，例如：
+正常安装不需要系统 FFmpeg。实际执行文件由固定 manifest `config/ffmpeg-distribution.json` 管理：
 
 ```text
-D:\VideoProject\Episode01\
-├─ voice.mp3
-├─ script.txt
-└─ ASR_Output\
+tools/ffmpeg/bin/ffmpeg.exe
+tools/ffmpeg/bin/ffprobe.exe
+tools/ffmpeg/distribution.json
+tools/ffmpeg/licenses/LICENSE.txt
 ```
 
-直接把外部路径传给脚本即可：
+源码库不提交 EXE。首次安装从固定 BtbN Windows x64 LGPL 构建下载 ZIP，经 SHA-256 校验后提取必要文件。项目内完整性检查：
 
 ```powershell
-.\scripts\align-subtitles.ps1 "D:\VideoProject\Episode01\voice.mp3" "D:\VideoProject\Episode01\script.txt" -Preset voiceover
+.\scripts\prepare-ffmpeg.ps1 -Mode verify
 ```
 
-不需要先把文件复制到 `local-ASR-service\input`。真实业务结果默认跟随源媒体写入旁边的 `ASR_Output`，这样字幕会继续属于原业务项目。
+下载失败可再次执行 `prepare-ffmpeg.ps1 -Mode prepare`；下载的归档缓存位于被 Git 忽略的 `runtime/downloads/`。校验失败时不会使用不可信的二进制。若下载中断留下 `.partial`，先检查该文件，再由 Agent 在授权范围内处理恢复；不要擅自以系统 PATH 中的未知 EXE 替代。
 
-如果业务项目需要自己管理产物位置，可以显式指定：
+正式 Windows Release ZIP 已附带 FFmpeg/ffprobe，因此无需联网下载此组件。源码 ZIP 和普通 clone 需要先运行准备脚本。发行版本、许可证及构建来源见 [THIRD_PARTY.md](../THIRD_PARTY.md)。
+
+## 3. 模型如何下载
+
+**仓库与 ZIP 都不包含任何模型权重。** 基础模型在首次执行 `install-cpu.ps1` 时自动下载至本地 ModelScope 缓存 `models/modelscope/`，以后重用。三个模型为：
+
+| 用途 | 模型 ID |
+|---|---|
+| 识别 | `iic/SenseVoiceSmall` |
+| VAD | `iic/speech_fsmn_vad_zh-cn-16k-common-pytorch` |
+| 标点 | `iic/punc_ct-transformer_cn-en-common-vocab471067-large` |
+
+需要重新准备或验证缓存时：
 
 ```powershell
-.\scripts\align-subtitles.ps1 "D:\VideoProject\Episode01\voice.mp3" "D:\VideoProject\Episode01\script.txt" -OutputDirectory "D:\VideoProject\Episode01\subtitles" -Preset voiceover
+.\scripts\prepare-models.ps1 -Mode base
+.\scripts\prepare-models.ps1 -Mode base -Offline
 ```
 
-只有开发、调试或项目内测试时，才建议使用：
+第二条只读取已有快照，不联网。自动模式尽量复用现有缓存；安装中断保留缓存，修复网络后再次执行准备脚本。
+
+### 手动下载三个基础模型
+
+下载模型的官方页面：
+
+- https://modelscope.cn/models/iic/SenseVoiceSmall
+- https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+- https://modelscope.cn/models/iic/punc_ct-transformer_cn-en-common-vocab471067-large
+
+建议在项目已有 `.venv-cpu` 中运行 SDK，而不是逐个下载不完整的权重：
 
 ```powershell
-.\scripts\align-subtitles.ps1 "D:\VideoProject\Episode01\voice.mp3" "D:\VideoProject\Episode01\script.txt" -UseProjectOutput -Preset voiceover
+.\.venv-cpu\Scripts\python.exe -c "from modelscope import snapshot_download; snapshot_download('iic/SenseVoiceSmall', local_dir=r'models\sensevoice-small')"
+.\.venv-cpu\Scripts\python.exe -c "from modelscope import snapshot_download; snapshot_download('iic/speech_fsmn_vad_zh-cn-16k-common-pytorch', local_dir=r'models\fsmn-vad')"
+.\.venv-cpu\Scripts\python.exe -c "from modelscope import snapshot_download; snapshot_download('iic/punc_ct-transformer_cn-en-common-vocab471067-large', local_dir=r'models\ct-punctuation')"
 ```
 
-此时结果进入仓库的 `output/`。仓库的 `input/` 和 `output/` 都只是本机开发/测试工作区，不作为所有真实项目共用的素材中心。
+三份本地完整快照需要配套更新 `config/local.json` 中的：
 
----
+```json
+{
+  "modelPath": "models\\sensevoice-small",
+  "vadModel": "models\\fsmn-vad",
+  "puncModel": "models\\ct-punctuation"
+}
+```
 
-## 日常使用
+*这里只展示字段，不要用该片段覆盖整个配置文件。* 验证每个目录包含 `model.pt`，并运行 `prepare-models.ps1 -Mode base -Offline` 及实际转写确认可加载。
 
-启动：
+若从另一台机器迁移完整缓存，应保持相同缓存路径；**不要同时建立第二套重复模型**。
+
+## 4. 可选：准确口播稿字幕对齐
+
+只在需要此功能时运行：
 
 ```powershell
-.\scripts\start-server.ps1
-.\scripts\health-check.ps1 -WaitSeconds 120
+.\scripts\install-aligner-cpu.ps1
+.\scripts\prepare-models.ps1 -Mode aligner -Offline
 ```
 
-检查：
+首次执行安装脚本会创建/复用 `.venv-qwen3-asr`、安装 `qwen-asr` 并下载 **Qwen/Qwen3-ForcedAligner-0.6B** 至 `models/qwen3-forced-aligner-0.6b/`。与普通 ASR 环境隔离；不在每次字幕对齐时联网。
+
+手动下载安装（或联网受限时在其他机器准备并复制完整目录）：
+
+模型页面：https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B
 
 ```powershell
-.\bin\asr.cmd health
+.\.venv-qwen3-asr\Scripts\python.exe -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-ForcedAligner-0.6B', local_dir=r'models\qwen3-forced-aligner-0.6b')"
 ```
 
-转写：
+应包含 `model.safetensors`、`config.json`、`tokenizer_config.json`、`vocab.json`、`merges.txt`、`preprocessor_config.json` 等同一版本的配套文件，不能只复制一个权重文件。项目在复用 Qwen 缓存时检查必要文件、配置 JSON 与 SafeTensors 头部及文件长度；这是**截断/结构检查，不等同于整份模型的 SHA-256 校验**。若下载后仍不完整，脚本会保留已有数据并报告错误，不会擅自清空模型目录。完成后再检查 `forced_alignment.ready`，使用准确原稿和音频验证字幕对齐。
+
+实验模型 `Qwen/Qwen3-ASR-0.6B` 不参与普通转写与 Forced Aligner；仅显式使用 `scripts/test-qwen3-asr.ps1` 时才准备，不属于默认安装。
+
+## 5. 日常启动和 Agent 调度
+
+```powershell
+.\service.bat status
+.\service.bat start
+.\service.bat stop
+.\service.bat restart
+```
+
+对 Agent 的统一规则：先检查状态；已运行则复用，已安装但未启动则启动并等待，完全没安装才运行安装脚本。若 8001 被其他进程占用，不要结束它。确认 Queue `running=0, waiting=0` 后再执行正常停止。活跃请求取消可能仍继续在后台推理直至结束。
+
+转写与字幕：
 
 ```powershell
 .\bin\asr.cmd transcribe "C:\media\demo.mp4"
-```
-
-已有准确口播稿并且可选 Forced Aligner 已就绪时：
-
-```powershell
+.\scripts\transcribe-file.ps1 "C:\media\demo.mp4"
 .\scripts\align-subtitles.ps1 "C:\media\voice.mp3" "C:\media\script.txt" -Preset voiceover
 ```
 
-停止：
+输出默认位于源媒体相邻的 `ASR_Output/`。使用自定义输出目录和 JSON / HTTP API 的详细信息见 [integration.md](integration.md)。
+
+## 6. 常见失败与恢复
+
+| 故障 | 优先检查 | 恢复 |
+|---|---|---|
+| Python 3.11 找不到 | `py -3.11 --version` | 补齐 Python 3.11 的系统前置条件，禁止覆盖其他项目 Python |
+| FFmpeg 准备失败 | manifest、下载 ZIP 的 SHA-256、`tools/ffmpeg/bin` | 修复网络并重试，保留已有完整文件 |
+| ModelScope 下载失败 | 网络、磁盘空间、缓存目录 | 重新执行准备脚本，或使用官方 SDK 手动下载 |
+| 对齐模型未就绪 | Qwen 环境及模型完整性 | 执行可选安装脚本或完整导入模型 |
+| 服务 120 秒内不就绪 | 是否仍在下载、服务日志、端口 | 区分下载与加载，不重复启动 |
+| Queue 忙碌 | `/health.queue` | 等待任务完成，不强制结束 |
+| 文件输出已存在 | 原业务目录的 `ASR_Output/` | 由调用方明确指定新目录，不覆盖成果 |
+
+升级源码后可以重新运行安装脚本校验依赖和模型，但不要删除 `.venv`、模型、配置或工作数据作为第一种修复手段。
+
+## 7. 对外发布和隐私边界
+
+Git / Source ZIP 不包含：`.venv*/`、`models/`、`tools/ffmpeg/`、`runtime/`、`input/`、`output/`、`logs/`、`backups/`、`config/local.json`。正式 Windows Release ZIP 的唯一例外是包含经过验证的 **FFmpeg 运行文件与第三方许可资料**，仍不包含模型与用户数据。
 
 ```powershell
-.\scripts\stop-server.ps1
+.\scripts\release-audit.ps1 -IncludeHistory
+.\scripts\package-windows-release.ps1 -Version v0.5.0-beta -BuildSuffix 20261016
 ```
 
----
-
-## 给其它 Agent / Skill 使用
-
-当服务已经运行，上游 Agent 不需要知道 FunASR、模型目录或虚拟环境。
-
-最简单的要求可以写成：
-
-```text
-需要把本地音频或视频转成文字时，优先调用 local-ASR-service。
-先检查 http://127.0.0.1:8001/health。
-服务可用时，通过项目 CLI 或 /v1/audio/transcriptions 提交本地媒体。
-不要在当前业务项目里重新安装 ASR 模型、FFmpeg Pipeline 或另一套 FunASR。
-```
-
-更完整的接入方式见 [integration.md](integration.md)。
-
----
-
-## 常见问题
-
-### 1. `Python 3.11 is required`
-
-说明当前机器没有可用的 Python 3.11。
-
-推荐：让 Agent 安装 Python 3.11，然后重新运行 `install-cpu.ps1`。
-
-### 2. `FFmpeg was not found`
-
-说明 `ffmpeg.exe` 没有安装，或者没有加入可被 PowerShell 找到的位置。
-
-推荐：让 Agent 检查并安装 FFmpeg，然后重新启动服务。
-
-### 3. 第一次启动很慢
-
-首次启动可能同时涉及模型下载与模型加载，属于正常现象。先使用：
-
-```powershell
-.\scripts\health-check.ps1 -WaitSeconds 120
-```
-
-如果网络较慢，模型第一次下载可能需要更久。
-
-### 4. 模型会不会上传 GitHub
-
-不会。
-
-`models/` 已被 `.gitignore` 排除。模型只存在于用户自己的本地机器。
-
-### 5. `.venv-cpu` 要不要提交
-
-不要。
-
-每个用户都应该在自己的机器运行 `install-cpu.ps1` 创建环境。
-
-### 6. 可以自己手工安装所有依赖吗
-
-可以，但**不推荐**。
-
-项目已经提供自动安装脚本，手工安装只会增加 Python、PyTorch 和依赖版本不一致的概率。
-
-### 7. 是否推荐 GPU
-
-当前公开教程默认推荐 CPU。GPU 路径保留，但不是当前 Public Beta 的主要验证目标。
-
----
-
-## 升级项目时
-
-更新源码后，通常先重新执行：
-
-```powershell
-.\scripts\install-cpu.ps1
-```
-
-脚本会复用现有 `.venv-cpu` 并同步 requirements，而不会主动删除模型或本机配置。
-
-然后重启服务：
-
-```powershell
-.\scripts\stop-server.ps1
-.\scripts\start-server.ps1
-.\scripts\health-check.ps1 -WaitSeconds 120
-```
-
-如果发布说明没有明确要求，不需要删除模型重新下载。
-
----
-
-## 推荐原则
-
-对于普通用户，推荐流程始终是：
-
-```text
-Clone 仓库
-→ 把安装任务交给 Agent
-→ Agent 检查 Python 3.11 / FFmpeg
-→ 运行 install-cpu.ps1
-→ start-server.ps1
-→ health-check.ps1
-→ 开始使用
-```
-
-用户应该使用这个项目，而不是学习如何手工拼装一套 FunASR 环境。
+打包结果保存在本机 `runtime/release/`。公开仓库、Git push、GitHub Release 必须另外明确授权。

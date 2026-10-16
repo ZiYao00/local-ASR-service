@@ -10,6 +10,16 @@
 
 目标不是教上游项目如何实现 ASR，而是教它们**如何复用已经运行的 local-ASR-service**。
 
+## Agent 最短接手流程
+
+1. 在项目目录执行 `service.bat status`，确认服务是否已经就绪；若端口属于未知服务，停止操作并报告冲突。
+2. 已安装但未启动：执行 `service.bat start`，等待模型完成加载。首次部署交给 `docs/INSTALL.md`，安装脚本会准备项目内 FFmpeg 及基础模型。
+3. 提交媒体：优先 `bin/asr.cmd transcribe <本地媒体>`，或使用下述 HTTP API；已有准确口播稿的对齐属于可选功能。
+4. 把结果保存在业务项目指定的文件夹。不得覆盖已有输出，也不要因客户端超时立即重复提交相同大任务。
+5. 服务是否保持后台运行由用户/业务部署策略决定；除非确定 Queue 已空闲且本服务没有其他使用者，不要擅自关闭共享实例。
+
+**本项目不依赖系统 FFmpeg PATH，也不要求每个 Agent 重新安装模型。** 默认服务只绑定 `127.0.0.1:8001`。
+
 ---
 
 ## 先理解一条原则
@@ -489,7 +499,7 @@ Server 内部只有一个转写执行位：
 推荐由 Agent 启动本项目：
 
 ```powershell
-.\scripts\start-server.ps1
+.\service.bat start
 .\scripts\health-check.ps1 -WaitSeconds 120
 ```
 

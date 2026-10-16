@@ -122,7 +122,7 @@ def _load_config() -> dict[str, Any]:
 
 CONFIG = _load_config()
 ENGINE = AsrEngine(CONFIG)
-APP = FastAPI(title="local-ASR-service", version="0.4.0")
+APP = FastAPI(title="local-ASR-service", version="0.5.0-beta")
 QUEUE = asyncio.Semaphore(1)
 RUNNING = 0
 WAITING = 0

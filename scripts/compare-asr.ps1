@@ -25,11 +25,8 @@ if ($inputItem.PSIsContainer) {
     throw "Input must be a single media file, not a directory: $($inputItem.FullName)"
 }
 
-$ffprobe = Get-Command ffprobe -ErrorAction SilentlyContinue
-if (-not $ffprobe) {
-    throw 'ffprobe was not found on PATH.'
-}
-$durationRaw = & $ffprobe.Source -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 -- $inputItem.FullName
+$ffprobe = Get-FunAsrBundledTool -Name ffprobe
+$durationRaw = & $ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 -- $inputItem.FullName
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($durationRaw)) {
     throw "ffprobe could not read duration from '$($inputItem.FullName)'."
 }

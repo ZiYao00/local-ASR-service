@@ -42,6 +42,7 @@ if ($health.device -notin @('cpu', 'cuda')) {
 if ($modelIds -notcontains $config.ModelAlias) {
     throw "Expected model alias '$($config.ModelAlias)' was not listed by /v1/models."
 }
+if (-not $health.ffmpeg) { throw 'Project FFmpeg is not available. Run scripts/prepare-ffmpeg.ps1.' }
 if (-not $health.vad -or -not $health.punctuation) {
     throw 'ASR service is running without the required VAD/punctuation pipeline.'
 }

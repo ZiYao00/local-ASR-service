@@ -3,6 +3,8 @@
 models/
 runtime/
 logs/
+# Project-bundled third-party FFmpeg files are distributed only in Windows Release packages
+tools/ffmpeg/
 
 # Local samples, generated transcripts, and backups
 input/

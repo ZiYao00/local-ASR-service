@@ -16,6 +16,11 @@ $python = Join-Path $root '.venv-qwen3-asr\Scripts\python.exe'
 $modelPath = Join-Path $root 'models\qwen3-asr-0.6b'
 $pythonScript = Join-Path $PSScriptRoot 'qwen3-asr-infer.py'
 
+# This experimental model is checked only when the experiment is explicitly run.
+# Checking the complete snapshot also resumes a partially downloaded model.
+if (Test-Path -LiteralPath $python -PathType Leaf) {
+    & (Join-Path $PSScriptRoot 'prepare-models.ps1') -Mode qwen-asr
+}
 foreach ($requiredPath in @($python, $pythonScript, $modelPath)) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
         throw "Required Qwen3-ASR test component was not found: $requiredPath"
@@ -49,10 +54,7 @@ foreach ($outputPath in @($textFile, $jsonFile)) {
     }
 }
 
-$ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
-if (-not $ffmpeg) {
-    throw 'ffmpeg was not found on PATH; it is required to prepare video input.'
-}
+$ffmpeg = Get-FunAsrBundledTool -Name ffmpeg
 
 $env:MODELSCOPE_CACHE = Join-Path $root 'models\modelscope-qwen3-asr'
 $env:HF_HOME = Join-Path $root 'runtime\cache\huggingface-qwen3-asr'
@@ -66,7 +68,7 @@ $totalTimer = [System.Diagnostics.Stopwatch]::StartNew()
 
 try {
     $ffmpegTimer = [System.Diagnostics.Stopwatch]::StartNew()
-    & $ffmpeg.Source -hide_banner -loglevel error -n -i $inputItem.FullName -vn -ac 1 -ar 16000 -c:a pcm_s16le $temporaryWav
+    & $ffmpeg -hide_banner -loglevel error -n -i $inputItem.FullName -vn -ac 1 -ar 16000 -c:a pcm_s16le $temporaryWav
     $ffmpegTimer.Stop()
     $ffmpegSeconds = [math]::Round($ffmpegTimer.Elapsed.TotalSeconds, 3)
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $temporaryWav -PathType Leaf)) {

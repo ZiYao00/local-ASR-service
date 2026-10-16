@@ -120,6 +120,16 @@ function Get-FunAsrPortListener {
         Select-Object -First 1
 }
 
+function Get-FunAsrBundledTool {
+    param([Parameter(Mandatory)][ValidateSet('ffmpeg', 'ffprobe')][string]$Name)
+    $root = Split-Path -Parent $PSScriptRoot
+    $tool = Join-Path $root ("tools\\ffmpeg\\bin\\{0}.exe" -f $Name)
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+        throw "Bundled $Name is missing. Run scripts\\prepare-ffmpeg.ps1 and retry."
+    }
+    return $tool
+}
+
 function Test-FunAsrGpuRuntime {
     param(
         [Parameter(Mandatory)]
@@ -199,12 +209,7 @@ function Start-FunAsrServer {
     $stdout = Join-Path $Config.Logs "server-$RuntimeName-$stamp.stdout.log"
     $stderr = Join-Path $Config.Logs "server-$RuntimeName-$stamp.stderr.log"
     $env:LOCAL_ASR_DEVICE = $Device
-    $ffmpeg = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
-    if ($ffmpeg) {
-        $env:LOCAL_ASR_FFMPEG = $ffmpeg.Source
-    } else {
-        Remove-Item Env:LOCAL_ASR_FFMPEG -ErrorAction SilentlyContinue
-    }
+    $env:LOCAL_ASR_FFMPEG = Get-FunAsrBundledTool -Name ffmpeg
     $arguments = @(
         '-m', 'uvicorn',
         'service.app:app',

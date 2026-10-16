@@ -2,6 +2,36 @@
 
 `local-ASR-service` is a thin integration layer. This repository does **not** redistribute pretrained model weights.
 
+## Bundled FFmpeg / ffprobe (Windows Release packages)
+
+The source repository does **not** commit FFmpeg binaries. The Windows distribution
+includes a separately built, pinned **LGPL** FFmpeg / ffprobe pair; the source-code
+clone downloads the same archive as part of normal installation.
+
+- Upstream project: https://ffmpeg.org/
+- Binary builder: https://github.com/BtbN/FFmpeg-Builds
+- Pinned upstream release: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-30-13-08
+- Package: `ffmpeg-N-127032-g6ae491a26c-win64-lgpl.zip`
+- SHA-256: `c73ad424c5f9d94dd48815b4d3531e57130cb9f5c3dc8f21f4aa4e1fdb0658e3`
+- Build manifest: `config/ffmpeg-distribution.json`; binaries and original `LICENSE.txt`
+  are packaged under `tools/ffmpeg/`
+- Corresponding FFmpeg source revision:
+  https://github.com/FFmpeg/FFmpeg/commit/6ae491a26c8320d1bbfdc3f137b1ea1e9989afaa
+  (confirmed from the archived build's `N-127032-g6ae491a26c` version marker)
+- Builder source/build recipe: https://github.com/BtbN/FFmpeg-Builds
+- License details: https://ffmpeg.org/legal.html
+- Pinned upstream license copies in this repository and in the Windows ZIP:
+  `licenses/ffmpeg/FFMPEG-LICENSE.md`, `LGPL-2.1.txt`, `LGPL-3.0.txt`,
+  and `GPL-3.0.txt`. Files correspond to the FFmpeg source revision above.
+  The original BtbN `LICENSE.txt` is preserved under `tools/ffmpeg/licenses/`.
+- The project invokes standalone `ffmpeg.exe`/`ffprobe.exe` processes; it does
+  not link against FFmpeg libraries. Source and build instructions are available
+  via the pinned URLs above; redistributed source must correspond to the binaries.
+
+This FFmpeg binary runs as a separate process; it is not relicensed under the
+repository's MIT license. Verify your chosen build's license and corresponding
+source availability before redistributing modified or replaced binaries.
+
 ## FunASR
 
 - Project: ModelScope/FunASR
