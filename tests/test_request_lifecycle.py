@@ -1,7 +1,7 @@
 """Regression tests for request cancellation, queue ownership, and temp cleanup.
 
 Runs without loading the ASR or forced-alignment models and without touching the
-already-running service on port 8001.
+already-running service on the configured port.
 """
 from __future__ import annotations
 

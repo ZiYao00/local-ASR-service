@@ -145,7 +145,7 @@ tools/ffmpeg/licenses/LICENSE.txt
 .\service.bat restart
 ```
 
-对 Agent 的统一规则：先检查状态；已运行则复用，已安装但未启动则启动并等待，完全没安装才运行安装脚本。若 8001 被其他进程占用，不要结束它。确认 Queue `running=0, waiting=0` 后再执行正常停止。活跃请求取消可能仍继续在后台推理直至结束。
+对 Agent 的统一规则：先检查状态；已运行则复用，已安装但未启动则启动并等待，完全没安装才运行安装脚本。默认端口为 8191，以 `config/local.json` 中的 `port` 为准；若被其他进程占用，不要结束它。确认 Queue `running=0, waiting=0` 后再执行正常停止。活跃请求取消可能仍继续在后台推理直至结束。
 
 转写与字幕：
 

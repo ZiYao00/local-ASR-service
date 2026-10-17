@@ -18,7 +18,7 @@
 4. 把结果保存在业务项目指定的文件夹。不得覆盖已有输出，也不要因客户端超时立即重复提交相同大任务。
 5. 服务是否保持后台运行由用户/业务部署策略决定；除非确定 Queue 已空闲且本服务没有其他使用者，不要擅自关闭共享实例。
 
-**本项目不依赖系统 FFmpeg PATH，也不要求每个 Agent 重新安装模型。** 默认服务只绑定 `127.0.0.1:8001`。
+**本项目不依赖系统 FFmpeg PATH，也不要求每个 Agent 重新安装模型。** 默认服务只绑定 `127.0.0.1:8191`。
 
 ---
 
@@ -152,7 +152,7 @@ raw_text 只用于调试、质量对比或需要原始 ASR 文本的场景。
 服务默认地址：
 
 ```text
-http://127.0.0.1:8001
+http://127.0.0.1:8191
 ```
 
 接口：
@@ -169,7 +169,7 @@ POST /v1/audio/alignments
 请求：
 
 ```text
-GET http://127.0.0.1:8001/health
+GET http://127.0.0.1:8191/health
 ```
 
 典型响应：
@@ -213,7 +213,7 @@ punctuation == true
 multipart 请求：
 
 ```text
-POST http://127.0.0.1:8001/v1/audio/transcriptions
+POST http://127.0.0.1:8191/v1/audio/transcriptions
 ```
 
 字段：
@@ -228,7 +228,7 @@ response_format=verbose_json
 PowerShell 示例：
 
 ```powershell
-curl.exe -X POST http://127.0.0.1:8001/v1/audio/transcriptions `
+curl.exe -X POST http://127.0.0.1:8191/v1/audio/transcriptions `
   -F "file=@C:\media\demo.mp4" `
   -F "model=custom" `
   -F "language=zh" `
@@ -258,7 +258,7 @@ MKV
 当调用方同时拥有**最终音频**和**已经确认的口播稿**时，不要再让 ASR 决定最终字幕文字，改用：
 
 ```text
-POST http://127.0.0.1:8001/v1/audio/alignments
+POST http://127.0.0.1:8191/v1/audio/alignments
 ```
 
 multipart 字段：

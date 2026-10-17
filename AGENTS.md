@@ -16,7 +16,7 @@ Use `README.md` for entry points, `docs/INSTALL.md` for installing/upgrading, an
 
 ## Operate and verify
 - Preferred management interface: `service.bat status|start|stop|restart`.
-- Reuse a running instance; do not kill an unknown listener on port 8001.
+- Reuse a running instance; do not kill an unknown listener on the configured port (default 8191).
 - Allow model loading to finish. A running port without `/health.status=ok`
   is not proof of readiness.
 - Always run a real audio transcription before reporting successful first install;

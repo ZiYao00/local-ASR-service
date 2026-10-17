@@ -4,7 +4,7 @@
 
 - 普通转写：SenseVoiceSmall + FSMN-VAD + CT-Transformer 标点；输出文本、真实 VAD 时间段、TXT/SRT。
 - 已有准确口播稿：可选 Qwen3 Forced Aligner，生成字/词级时间戳和剪辑字幕（适用于约 5 分钟以内单人口播）。
-- 默认本机 CPU、`127.0.0.1:8001`；同一服务端 Queue 供多个 Agent 共享。
+- 默认本机 CPU、`127.0.0.1:8191`；同一服务端 Queue 供多个 Agent 共享。
 - **项目准备自己的 FFmpeg / ffprobe，不需要系统安装或 PATH 配置。**
 - **源码仓库与发布包都不包含模型权重。** 首次安装自动下载基础模型；显式启用字幕对齐时才下载可选 Qwen3 模型；支持手动下载。
 
@@ -76,10 +76,10 @@ Clone 仓库后，把下面任务发给具备本地工作区和终端权限的 A
 ## HTTP API
 
 ```text
-GET  http://127.0.0.1:8001/health
-GET  http://127.0.0.1:8001/v1/models
-POST http://127.0.0.1:8001/v1/audio/transcriptions
-POST http://127.0.0.1:8001/v1/audio/alignments
+GET  http://127.0.0.1:8191/health
+GET  http://127.0.0.1:8191/v1/models
+POST http://127.0.0.1:8191/v1/audio/transcriptions
+POST http://127.0.0.1:8191/v1/audio/alignments
 ```
 
 模型加载需要时间。发起请求前确认 `/health.status == ok`，再检查 `vad`、`punctuation` 和 `ffmpeg`。HTTP 请求取消后模型任务不一定立即停止；不要在 Queue 忙碌时强制关机或重复安装。

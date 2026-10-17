@@ -1,6 +1,6 @@
 {
   "host": "127.0.0.1",
-  "port": 8001,
+  "port": 8191,
   "runtimeDataRoot": ".",
   "cpuVenv": ".venv-cpu",
   "gpuVenv": ".venv-gpu",
